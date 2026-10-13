@@ -1,4 +1,4 @@
-const CACHE = 'gym-manager-v4';
+const CACHE = 'gym-manager-v5';
 const ASSETS = ['./', 'index.html', 'style.css', 'app.js', 'qrcode.js', 'jsqr.js', 'manifest.json', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {

@@ -12,6 +12,7 @@ const DEFAULT_PLANS = [
   { id: 'p12', name: 'Yearly', months: 12, fee: 9000 },
 ];
 let db = normalize(load());
+if (normalize.fixed) { normalize.fixed = false; save(); } // keep newly made QR codes stable across reloads
 function load() {
   try {
     const d = JSON.parse(localStorage.getItem(KEY));
@@ -22,7 +23,7 @@ function load() {
 function rtoken() { const a = new Uint8Array(6); crypto.getRandomValues(a); return Array.from(a, b => b.toString(36).padStart(2, '0')).join('').slice(0, 10); }
 function normalize(d) {
   d.gym = d.gym || { name: 'My Gym' }; d.checkins = d.checkins || {}; d.attendance = d.attendance || {}; d.plans = d.plans && d.plans.length ? d.plans : DEFAULT_PLANS;
-  d.members.forEach(m => { if (!m.token) m.token = rtoken(); });
+  d.members.forEach(m => { if (!m.token) { m.token = rtoken(); normalize.fixed = true; } });
   return d;
 }
 function save() {
@@ -348,7 +349,8 @@ function onScan(data) {
   if (data === scan.last && now - scan.lastAt < 6000) { scan.lastAt = now; return; }
   scan.last = data; scan.lastAt = now;
   const p = String(data).split(':'), m = p[0] === 'GYM' && getM(p[1]);
-  if (!m || m.token !== p[2]) { beep(false); return showRes('stop', 'Invalid QR', ['This QR is not from this gym, or it was replaced.']); }
+  if (!m) { beep(false); return showRes('stop', 'Member not found', ['This QR was made in a different app or on another phone, or the member was deleted.', 'Open the member here and use their QR entry card from this app.']); }
+  if (m.token !== p[2]) { beep(false); return showRes('stop', esc(m.name), ['This is an old QR card.', 'Please use the latest QR card from the gym.']); }
   const s = status(m);
   if (s.key === 'expired') { beep(false); return showRes('stop', esc(m.name), [`Membership ended on ${fmtDate(m.expiry)}.`, 'Entry not allowed. Please renew first.'], m, true); }
   const r = checkIn(m);
@@ -392,7 +394,7 @@ async function qrFile(m) {
   return new File([blob], `${m.name.replace(/\W+/g, '-')}-gym-qr.png`, { type: 'image/png' });
 }
 function qrSheet(id, note) {
-  const m = getM(id);
+  const m = getM(id); save();
   openSheet('QR entry card', `${note ? `<p style="margin:0 0 10px;font-weight:600">${esc(note)}</p>` : ''}<img class="qrimg" src="${qrCardUrl(m)}" alt="QR card for ${esc(m.name)}">
     <div class="actions"><button class="btn primary" data-act="qrShare" data-id="${id}">Send on WhatsApp</button><button class="btn ghost" data-act="qrSave" data-id="${id}">Download image</button></div>
     <p class="mini">The QR stays the same after renewal. Only the dates on the card change, so send the updated card after a renewal. Entry always follows the dates saved in the app.</p>
