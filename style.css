@@ -178,3 +178,17 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
   #toast{bottom:28px}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* QR scanner */
+.scanbox{position:relative;background:#0E1114;border-radius:10px;overflow:hidden;aspect-ratio:1/1;width:100%;max-width:420px;max-height:56vh;margin:0 auto 12px}
+.scanbox video{width:100%;height:100%;object-fit:cover;display:block}
+.scanbox .frame{position:absolute;inset:16%;border:3px solid rgba(255,255,255,.9);border-radius:12px;box-shadow:0 0 0 999px rgba(0,0,0,.38);pointer-events:none}
+.scanmsg{position:absolute;left:0;right:0;bottom:0;padding:9px 12px;color:#fff;background:rgba(0,0,0,.62);text-align:center;font-size:14px}
+.scanres{border-radius:10px;padding:16px 18px;color:#fff;margin:0 auto 12px;max-width:420px;animation:up .18s ease-out}
+.scanres h3{font-size:32px;line-height:1.1;margin-bottom:6px}
+.scanres.ok{background:var(--green)}
+.scanres.warn{background:var(--yellow);color:var(--ink)}
+.scanres.stop{background:var(--red)}
+.scanres.dup{background:var(--ink2)}
+#view .btn.wide{max-width:420px;display:flex;margin-left:auto;margin-right:auto}
+.qrimg{display:block;width:100%;max-width:300px;margin:6px auto 14px;border-radius:10px}

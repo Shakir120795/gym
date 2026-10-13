@@ -11,13 +11,19 @@ const DEFAULT_PLANS = [
   { id: 'p6', name: 'Half-yearly', months: 6, fee: 5000 },
   { id: 'p12', name: 'Yearly', months: 12, fee: 9000 },
 ];
-let db = load();
+let db = normalize(load());
 function load() {
   try {
     const d = JSON.parse(localStorage.getItem(KEY));
     if (d && Array.isArray(d.members)) return d;
   } catch (e) {}
-  return { gym: { name: 'My Gym', phone: '' }, plans: DEFAULT_PLANS, members: [], payments: [], attendance: {}, seq: 1 };
+  return { gym: { name: 'My Gym', phone: '' }, plans: DEFAULT_PLANS, members: [], payments: [], attendance: {}, checkins: {}, seq: 1 };
+}
+function rtoken() { const a = new Uint8Array(6); crypto.getRandomValues(a); return Array.from(a, b => b.toString(36).padStart(2, '0')).join('').slice(0, 10); }
+function normalize(d) {
+  d.gym = d.gym || { name: 'My Gym' }; d.checkins = d.checkins || {}; d.attendance = d.attendance || {}; d.plans = d.plans && d.plans.length ? d.plans : DEFAULT_PLANS;
+  d.members.forEach(m => { if (!m.token) m.token = rtoken(); });
+  return d;
 }
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(db)); }
@@ -39,6 +45,25 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const sum = a => a.reduce((s, p) => s + (+p.amount || 0), 0);
 const uid = () => 'i' + (db.seq++) + Date.now().toString(36);
 const getM = id => db.members.find(m => m.id === id);
+const SESS = { M: 'Morning', E: 'Evening' };
+const nowTime = () => { const d = new Date(); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+const sessionOf = t => (+t.slice(0, 2) < (db.gym.eveningFrom || 12) ? 'M' : 'E');
+function checkIn(m, date = today(), time = nowTime()) {
+  const day = (db.checkins[date] = db.checkins[date] || {}), list = (day[m.id] = day[m.id] || []);
+  const s = sessionOf(time), ex = list.find(x => x.s === s);
+  if (ex) return { already: true, s, t: ex.t };
+  list.push({ s, t: time });
+  const a = (db.attendance[date] = db.attendance[date] || []);
+  if (!a.includes(m.id)) a.push(m.id);
+  save(); return { already: false, s, t: time };
+}
+function dayCounts(date = today()) {
+  const day = db.checkins[date] || {}, ids = new Set([...(db.attendance[date] || []), ...Object.keys(day)].filter(getM));
+  let M = 0, E = 0;
+  ids.forEach(id => (day[id] || []).forEach(x => x.s === 'M' ? M++ : E++));
+  return { members: ids.size, M, E };
+}
+const countsLine = (c = dayCounts()) => `<b>${c.members}</b> members came today, morning ${c.M}, evening ${c.E}`;
 const daysInMonth = ym => new Date(+ym.slice(0, 4), +ym.slice(5), 0).getDate();
 
 const I = {
@@ -95,13 +120,14 @@ function download(name, content, type = 'text/csv;charset=utf-8') {
 /* ---------- state ---------- */
 const ui = {
   tab: 'home', filter: 'all', q: '', feeTab: 'pending',
-  attMode: 'daily', attDate: today(), attQ: '', attMonth: today().slice(0, 7),
+  attMode: 'scan', attDate: today(), attQ: '', attMonth: today().slice(0, 7),
   repMode: 'monthly', repDate: today(), repMonth: today().slice(0, 7),
 };
 const TABS = [['home', 'Home', 'home'], ['members', 'Members', 'members'], ['fees', 'Fees', 'fees'],
   ['attendance', 'Attendance', 'attendance'], ['reminders', 'Reminders', 'bell'], ['reports', 'Reports', 'reports']];
 
 function render() {
+  if (!(scan.stream && ui.tab === 'attendance' && ui.attMode === 'scan')) stopCam();
   $('#gymName').textContent = db.gym.name || 'Gym Manager';
   document.title = (db.gym.name || 'Gym') + ' | Gym Manager';
   $('#settingsBtn').innerHTML = ic('gear', 24);
@@ -109,6 +135,7 @@ function render() {
     `<button class="${ui.tab === k ? 'on' : ''}" data-act="tab" data-k="${k}" ${ui.tab === k ? 'aria-current="page"' : ''}>${ic(i)}<span>${l}</span></button>`).join('');
   const views = { home: viewHome, members: viewMembers, fees: viewFees, attendance: viewAttendance, reminders: viewReminders, reports: viewReports };
   $('#view').innerHTML = views[ui.tab]();
+  resumeCam();
 }
 function go(tab) { ui.tab = tab; render(); window.scrollTo(0, 0); }
 
@@ -119,12 +146,12 @@ function viewHome() {
   const todayCol = sum(db.payments.filter(p => p.date === t));
   const monthCol = sum(db.payments.filter(p => p.date.startsWith(ym)));
   const pend = ms.filter(m => m.due > 0);
-  const came = (db.attendance[t] || []).filter(id => getM(id)).length;
+  const dc = dayCounts(t), came = dc.members;
   const soon = ms.filter(m => { const l = daysBetween(t, m.expiry); return l >= 0 && l <= 7; }).sort((a, b) => a.expiry.localeCompare(b.expiry));
   return `
   <section class="board">
     <div><span class="lbl">Today's collection</span><div class="big">${inr(todayCol)}</div></div>
-    <div class="side"><div class="num">${came}</div><span class="lbl">came today</span></div>
+    <div class="side"><div class="num">${came}</div><span class="lbl">came today</span><div class="mini" style="color:#B7BFC7;margin:2px 0 0">Morning ${dc.M}, evening ${dc.E}</div></div>
   </section>
   <div class="tiles">
     <button class="tile t-blue" data-act="tab" data-k="members"><span class="lbl">Total members</span><span class="num">${ms.length}</span></button>
@@ -134,7 +161,7 @@ function viewHome() {
   </div>
   <div class="quick">
     <button class="btn primary" data-act="add">${ic('plus', 20)} Add member</button>
-    <button class="btn" data-act="tab" data-k="attendance">${ic('check', 20)} Mark attendance</button>
+    <button class="btn" data-act="tab" data-k="attendance">${ic('check', 20)} Scan entry</button>
   </div>
   <h2>Membership ending this week</h2>
   ${soon.length ? `<div class="list">${soon.slice(0, 6).map(memberRow).join('')}</div>${soon.length > 6 ? `<p class="mini">${soon.length - 6} more in Reminders</p>` : ''}`
@@ -201,17 +228,24 @@ function viewFees() {
 }
 
 /* ---------- attendance ---------- */
+const visitTags = (v = []) => v.map(x => `<span class="tag ${x.s === 'M' ? 'expiring' : 'active'}">${SESS[x.s]} ${x.t}</span>`).join(' ');
+const manualOpen = () => Date.now() < (ui.manualUntil || 0) && ui.attDate === today();
 function attDailyList() {
-  const d = ui.attDate, marked = new Set(db.attendance[d] || []), q = ui.attQ.trim().toLowerCase();
-  const eligible = db.members.filter(m => m.expiry >= d || marked.has(m.id));
-  const list = eligible.filter(m => !q || m.name.toLowerCase().includes(q) || m.mobile.includes(q)).sort((a, b) => a.name.localeCompare(b.name));
-  const came = eligible.filter(m => marked.has(m.id)).length;
-  return `<p class="sum"><b>${came}</b> of ${eligible.length} members came</p>` +
-    (list.length ? `<div class="list">${list.map(m => `<button class="row ${marked.has(m.id) ? 'in' : ''}" data-act="att" data-id="${m.id}">
-      <span class="check">${marked.has(m.id) ? ic('check', 20) : ''}</span>
-      <span class="who"><b>${esc(m.name)}</b><small>${m.expiry < d ? 'Membership expired' : esc(m.mobile)}</small></span>
-      ${m.due > 0 ? `<small class="due">Due ${inr(m.due)}</small>` : ''}</button>`).join('')}</div>`
-      : `<div class="list"><div class="empty">${db.members.length ? 'No active members found.' : 'Add members first to mark attendance.'}</div></div>`);
+  const d = ui.attDate, day = db.checkins[d] || {}, c = dayCounts(d);
+  const ids = new Set([...(db.attendance[d] || []), ...Object.keys(day)].filter(getM));
+  const came = [...ids].map(getM).sort((a, b) => a.name.localeCompare(b.name));
+  let html = `<p class="sum"><b>${c.members}</b> members came, morning ${c.M}, evening ${c.E}</p>` +
+    (came.length ? `<div class="list">${came.map(m => `<div class="row in"><span class="check">${ic('check', 20)}</span>
+      <span class="who"><b>${esc(m.name)}</b><span style="display:flex;gap:6px;flex-wrap:wrap;margin-top:3px">${visitTags(day[m.id]) || '<small>Marked earlier</small>'}</span></span></div>`).join('')}</div>`
+      : '<div class="list"><div class="empty">Nobody has scanned in yet.</div></div>');
+  if (ui.attDate === today()) {
+    if (manualOpen()) {
+      const rest = db.members.filter(m => m.expiry >= d).sort((a, b) => a.name.localeCompare(b.name));
+      html += `<h2>Manual entry</h2><p class="mini" style="margin:-4px 0 8px">Unlocked for a few minutes. Tap a member to add this session's entry.</p>
+        <div class="list">${rest.map(m => `<button class="row" data-act="att" data-id="${m.id}"><span class="who"><b>${esc(m.name)}</b><small>${esc(m.mobile)}</small></span><span class="tag expiring">${SESS[sessionOf(nowTime())]}</span></button>`).join('') || '<div class="empty">No active members.</div>'}</div>`;
+    } else html += `<button class="btn ghost wide" data-act="manual">Manual entry (owner PIN)</button>`;
+  }
+  return html;
 }
 function monthAtt(ym) {
   const n = daysInMonth(ym), dayTotals = Array(n).fill(0);
@@ -232,11 +266,137 @@ function attMonthly() {
     : '<div class="list"><div class="empty">No attendance marked in this month.</div></div>'}`;
 }
 function viewAttendance() {
-  const seg = `<div class="seg"><button class="${ui.attMode === 'daily' ? 'on' : ''}" data-act="attMode" data-k="daily">Mark today</button><button class="${ui.attMode === 'monthly' ? 'on' : ''}" data-act="attMode" data-k="monthly">Monthly report</button></div>`;
+  const M = [['scan', 'Scan entry'], ['today', 'Who came'], ['monthly', 'Monthly']];
+  const seg = `<div class="seg">${M.map(([k, l]) => `<button class="${ui.attMode === k ? 'on' : ''}" data-act="attMode" data-k="${k}">${l}</button>`).join('')}</div>`;
   if (ui.attMode === 'monthly') return seg + `<div id="attBody">${attMonthly()}</div>`;
-  return seg + `<div class="bar"><input type="date" id="attDate" value="${ui.attDate}" max="${today()}"></div>
-    <input class="search" id="attQ" type="search" placeholder="Search member" value="${esc(ui.attQ)}" autocomplete="off" style="margin-bottom:6px">
-    <div id="attBody">${attDailyList()}</div>`;
+  if (ui.attMode === 'today') return seg + `<div class="bar"><input type="date" id="attDate" value="${ui.attDate}" max="${today()}"></div><div id="attBody">${attDailyList()}</div>`;
+  return seg + `<div class="scanbox"><video id="cam" playsinline muted></video><canvas id="camc" hidden></canvas><div class="frame"></div><div id="scanMsg" class="scanmsg">Camera is off</div></div>
+    <div id="scanRes"></div>
+    <button class="btn primary wide" style="margin-top:0" data-act="camToggle" id="camBtn">Start camera</button>
+    <p class="sum" id="scanCount" style="margin-top:14px">${countsLine()}</p>
+    <p class="mini">Keep this screen open on the gate phone. The camera starts by itself and keeps scanning one member after another. Each member can check in once in the morning and once in the evening.</p>
+    ${window.GYM_PREVIEW ? `<hr><label class="mini">Test without camera
+      <select id="simSel" style="width:100%;padding:10px;margin-top:4px">${db.members.map(m => `<option value="${m.id}">${esc(m.name)} (${status(m).key})</option>`).join('')}</select></label>
+      <button class="btn ghost wide" data-act="simScan">Simulate scan</button>` : ''}`;
+}
+
+/* ---------- QR scanner ---------- */
+const scan = { stream: null, timer: 0, last: '', lastAt: 0, hide: 0 };
+const playSafe = v => { const p = v.play(); if (p && p.catch) p.catch(() => {}); };
+async function startCam() {
+  if (scan.starting || scan.stream) return;
+  if (typeof jsQR === 'undefined') { $('#scanMsg').textContent = 'Scanner library missing'; return; }
+  scan.starting = true;
+  try {
+    try { scan.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false }); }
+    catch (e) { const m = $('#scanMsg'); if (m) m.textContent = 'Camera blocked. Allow camera for this site in browser settings.'; return; }
+    const v = $('#cam');
+    if (!v || ui.tab !== 'attendance' || ui.attMode !== 'scan') { stopCam(); return; }
+    v.srcObject = scan.stream; playSafe(v);
+    $('#camBtn').textContent = 'Stop camera'; $('#scanMsg').textContent = 'Show your QR inside the box';
+    keepAwake(); clearTimeout(scan.timer); tick();
+  } finally { scan.starting = false; }
+}
+function keepAwake() {
+  try { if (navigator.wakeLock) navigator.wakeLock.request('screen').then(w => { scan.wake = w; }).catch(() => {}); } catch (e) {}
+}
+function stopCam() {
+  clearTimeout(scan.timer); scan.timer = 0;
+  if (scan.stream) { scan.stream.getTracks().forEach(t => t.stop()); scan.stream = null; }
+  if (scan.wake) { try { scan.wake.release(); } catch (e) {} scan.wake = null; }
+}
+/* Camera opens by itself on the scan screen and keeps running after every scan. */
+function resumeCam() {
+  if (ui.tab !== 'attendance' || ui.attMode !== 'scan') return;
+  const v = $('#cam'); if (!v) return;
+  if (scan.stream && scan.stream.getTracks().every(t => t.readyState === 'live')) {
+    v.srcObject = scan.stream; playSafe(v);
+    $('#camBtn').textContent = 'Stop camera'; $('#scanMsg').textContent = 'Show your QR inside the box';
+    keepAwake(); clearTimeout(scan.timer); tick();
+  } else {
+    stopCam();
+    if (ui.camWanted !== false) startCam();
+  }
+}
+function tick() {
+  const v = $('#cam'), c = $('#camc'); if (!scan.stream || !v || !c) return;
+  if (v.readyState >= 2 && v.videoWidth) {
+    const w = 420, h = Math.round(v.videoHeight * w / v.videoWidth);
+    c.width = w; c.height = h;
+    const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(v, 0, 0, w, h);
+    const r = jsQR(x.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' });
+    if (r && r.data) onScan(r.data);
+  }
+  scan.timer = setTimeout(tick, 150);
+}
+function beep(ok) {
+  try {
+    const a = new (window.AudioContext || window.webkitAudioContext)(), o = a.createOscillator(), g = a.createGain();
+    o.frequency.value = ok ? 880 : 220; g.gain.value = .15; o.connect(g); g.connect(a.destination); o.start(); o.stop(a.currentTime + (ok ? .12 : .35));
+  } catch (e) {}
+  if (navigator.vibrate) navigator.vibrate(ok ? 80 : [180, 80, 180]);
+}
+function showRes(cls, title, lines, m, btn) {
+  const el = $('#scanRes'); if (!el) return;
+  el.innerHTML = `<div class="scanres ${cls}"><h3>${title}</h3>${lines.map(l => `<div>${l}</div>`).join('')}${btn ? `<button class="btn light small" style="margin-top:10px" data-act="renew" data-id="${m.id}">Renew now</button>` : ''}</div>`;
+  const c = $('#scanCount'); if (c) c.innerHTML = countsLine();
+  clearTimeout(scan.hide); scan.hide = setTimeout(() => { const e = $('#scanRes'); if (e) e.innerHTML = ''; }, 7000);
+}
+function onScan(data) {
+  const now = Date.now();
+  if (!$('#sheet').hidden) return;
+  if (data === scan.last && now - scan.lastAt < 6000) { scan.lastAt = now; return; }
+  scan.last = data; scan.lastAt = now;
+  const p = String(data).split(':'), m = p[0] === 'GYM' && getM(p[1]);
+  if (!m || m.token !== p[2]) { beep(false); return showRes('stop', 'Invalid QR', ['This QR is not from this gym, or it was replaced.']); }
+  const s = status(m);
+  if (s.key === 'expired') { beep(false); return showRes('stop', esc(m.name), [`Membership ended on ${fmtDate(m.expiry)}.`, 'Entry not allowed. Please renew first.'], m, true); }
+  const r = checkIn(m);
+  if (r.already) { beep(false); return showRes('dup', esc(m.name), [`Already checked in for ${SESS[r.s].toLowerCase()} at ${r.t}.`]); }
+  beep(true);
+  const lines = [`${SESS[r.s]} entry at ${r.t}`];
+  if (s.key === 'expiring') lines.push(`Membership ends ${s.left === 0 ? 'today' : 'in ' + s.left + ' days'}. Please renew.`); else lines.push(`Valid till ${fmtDate(m.expiry)}, ${s.left} days left`);
+  if (m.due > 0) lines.push(`Fees pending ${inr(m.due)}`);
+  showRes(s.key === 'expiring' || m.due > 0 ? 'warn' : 'ok', 'Welcome, ' + esc(m.name), lines);
+}
+
+/* ---------- QR card ---------- */
+function qrCardUrl(m) {
+  const qr = qrcode(0, 'M'); qr.addData(`GYM:${m.id}:${m.token}`); qr.make();
+  const n = qr.getModuleCount(), cell = Math.floor(440 / (n + 8)), size = cell * (n + 8);
+  const W = 600, H = 960, c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d');
+  x.fillStyle = '#1E2328'; x.fillRect(0, 0, W, H);
+  x.fillStyle = '#1D56B0'; x.fillRect(0, 118, W, 8);
+  x.fillStyle = '#fff'; x.textAlign = 'center';
+  x.font = "700 56px 'Barlow Condensed','Arial Narrow',sans-serif"; x.fillText((db.gym.name || 'Gym').slice(0, 24), W / 2, 84);
+  const ox = Math.round((W - size) / 2), oy = 160;
+  x.fillStyle = '#fff'; x.fillRect(ox - 10, oy - 10, size + 20, size + 20);
+  x.fillStyle = '#1E2328';
+  for (let r = 0; r < n; r++) for (let k = 0; k < n; k++) if (qr.isDark(r, k)) x.fillRect(ox + (k + 4) * cell, oy + (r + 4) * cell, cell, cell);
+  const F = "'Barlow Condensed','Arial Narrow',sans-serif", B = "'Barlow',Arial,sans-serif", by = oy + size + 80;
+  x.fillStyle = '#fff'; x.font = `700 52px ${F}`; x.fillText(m.name.slice(0, 26), W / 2, by);
+  x.fillStyle = '#B7BFC7'; x.font = `500 30px ${B}`; x.fillText(m.mobile, W / 2, by + 44);
+  x.fillStyle = '#3A424A'; x.fillRect(40, by + 74, W - 80, 2);
+  [['Plan', m.planName, 105], ['Joined', fmtDate(m.joinDate), 300], ['Valid till', fmtDate(m.expiry), 495]].forEach(([l, v, cx]) => {
+    x.fillStyle = '#B7BFC7'; x.font = `500 22px ${B}`; x.fillText(l, cx, by + 112);
+    let px = 32; x.fillStyle = '#fff';
+    do { x.font = `700 ${px}px ${F}`; px -= 2; } while (x.measureText(String(v)).width > 170 && px > 14);
+    x.fillText(String(v), cx, by + 150);
+  });
+  x.fillStyle = '#B7BFC7'; x.font = `22px ${B}`; x.fillText('Scan this at the gym entrance', W / 2, by + 205);
+  return c.toDataURL('image/png');
+}
+async function qrFile(m) {
+  const blob = await (await fetch(qrCardUrl(m))).blob();
+  return new File([blob], `${m.name.replace(/\W+/g, '-')}-gym-qr.png`, { type: 'image/png' });
+}
+function qrSheet(id, note) {
+  const m = getM(id);
+  openSheet('QR entry card', `${note ? `<p style="margin:0 0 10px;font-weight:600">${esc(note)}</p>` : ''}<img class="qrimg" src="${qrCardUrl(m)}" alt="QR card for ${esc(m.name)}">
+    <div class="actions"><button class="btn primary" data-act="qrShare" data-id="${id}">Send on WhatsApp</button><button class="btn ghost" data-act="qrSave" data-id="${id}">Download image</button></div>
+    <p class="mini">The QR stays the same after renewal. Only the dates on the card change, so send the updated card after a renewal. Entry always follows the dates saved in the app.</p>
+    <button class="btn danger small" style="margin-top:12px" data-act="qrNew" data-id="${id}">Make a new QR (old one stops working)</button>`);
 }
 
 /* ---------- reminders ---------- */
@@ -287,7 +447,9 @@ function viewReports() {
   <div class="tiles">
     <div class="tile t-green"><span class="lbl">New admissions</span><span class="num">${r.admissions.length}</span></div>
     <div class="tile t-yellow"><span class="lbl">Expired members</span><span class="num">${r.expired.length}</span></div>
-    <div class="tile t-red" style="grid-column:1/-1"><span class="lbl">Pending payments right now</span><span class="num">${inr(sum(r.pending.map(m => ({ amount: m.due }))))}</span><small>${r.pending.length} members</small></div>
+    ${r.daily ? `<div class="tile t-blue"><span class="lbl">Members came</span><span class="num">${dayCounts(r.key).members}</span><small>Morning ${dayCounts(r.key).M}, evening ${dayCounts(r.key).E}</small></div>`
+      : `<div class="tile t-blue"><span class="lbl">Members came</span><span class="num">${monthAtt(r.key).rows.length}</span><small>${monthAtt(r.key).total} member-days</small></div>`}
+    <div class="tile t-red"><span class="lbl">Pending payments right now</span><span class="num">${inr(sum(r.pending.map(m => ({ amount: m.due }))))}</span><small>${r.pending.length} members</small></div>
   </div>
   ${!r.daily && Object.keys(perDay).length ? `<h2>Day-wise collection</h2><div class="list repdays">${Object.keys(perDay).sort().map(d => `<div class="row"><span class="who"><b>${fmtDate(d)}</b></span><span class="amt">${inr(perDay[d])}</span></div>`).join('')}</div>` : ''}
   <h2>Payments received</h2>${simple(r.pays, p => `<div class="row"><span class="who"><b>${esc(p.name)}</b><small>${r.daily ? '' : fmtDate(p.date) + ', '}${esc(p.mode)}, ${esc(p.type)}</small></span><span class="amt">${inr(p.amount)}</span></div>`)}
@@ -299,7 +461,7 @@ function viewReports() {
 function exportReport() {
   const r = reportData(), rows = [];
   rows.push([`${db.gym.name} - ${r.daily ? 'Daily' : 'Monthly'} report`, r.label], []);
-  rows.push(['Total collection', sum(r.pays)], ['New admissions', r.admissions.length], ['Expired members', r.expired.length], ['Pending amount (now)', sum(r.pending.map(m => ({ amount: m.due })))], []);
+  rows.push(['Total collection', sum(r.pays)], ['Members came', r.daily ? dayCounts(r.key).members : monthAtt(r.key).rows.length], ['New admissions', r.admissions.length], ['Expired members', r.expired.length], ['Pending amount (now)', sum(r.pending.map(m => ({ amount: m.due })))], []);
   rows.push(['PAYMENTS RECEIVED'], ['Date', 'Member', 'Amount', 'Mode', 'Type']);
   r.pays.forEach(p => rows.push([p.date, p.name, p.amount, p.mode, p.type]));
   rows.push([], ['NEW ADMISSIONS'], ['Joining date', 'Member', 'Mobile', 'Plan', 'Fee']);
@@ -396,7 +558,8 @@ function memberSheet(id) {
       <a class="btn ghost" href="tel:${esc(m.mobile)}">${ic('phone', 18)} Call</a>
       <a class="btn ghost" href="${waLink(m, m.due > 0 ? 'due' : 'exp')}" target="_blank" rel="noopener">${ic('chat', 18)} WhatsApp</a>
       <button class="btn ghost" data-act="edit" data-id="${id}">Edit</button>
-      <button class="btn danger" data-act="del" data-id="${id}">Delete</button></div>
+      <button class="btn danger" data-act="del" data-id="${id}">Delete</button>
+      <button class="btn" style="grid-column:1/-1" data-act="qr" data-id="${id}">QR entry card</button></div>
     <h3 style="font-size:20px;margin:6px 0 8px">Payment history</h3>
     ${pays.length ? `<div class="list">${pays.map(p => `<div class="row"><span class="who"><b>${fmtDate(p.date)}</b><small>${esc(p.mode)}, ${esc(p.type)}</small></span><span class="amt">${inr(p.amount)}</span></div>`).join('')}</div>` : '<div class="list"><div class="empty">No payments yet.</div></div>'}`);
 }
@@ -410,6 +573,8 @@ function planRow(p = {}) {
 function settingsSheet() {
   openSheet('Settings', `<form data-form="settings" autocomplete="off">
     <label>Gym name<input name="gym" required value="${esc(db.gym.name)}"></label>
+    <div class="two"><label>Owner PIN (4 digits)<input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" value="${esc(db.gym.pin || '')}" placeholder="For manual entry"></label>
+    <label>Evening starts at (hour)<input name="ef" type="number" min="1" max="23" value="${db.gym.eveningFrom || 12}"></label></div>
     <h3 style="font-size:20px;margin:20px 0 0">Membership plans</h3>
     <div id="plans">${db.plans.map(planRow).join('')}</div>
     <button type="button" class="btn ghost small" style="margin-top:10px" data-act="addPlan">Add plan</button>
@@ -427,7 +592,7 @@ const handlers = {
     if (db.members.some(m => m.mobile === mobile)) return toast('This mobile number is already registered', true);
     const plan = db.plans.find(p => p.id === f.get('plan')); if (!plan) return toast('Add a plan in Settings first', true);
     const fee = +f.get('fee'), paid = Math.min(+f.get('paid'), fee), join = f.get('joinDate');
-    const m = { id: uid(), name: f.get('name').trim(), mobile, joinDate: join, planId: plan.id, planName: plan.name, fee, expiry: addMonths(join, plan.months), due: fee - paid };
+    const m = { id: uid(), name: f.get('name').trim(), mobile, joinDate: join, planId: plan.id, planName: plan.name, fee, expiry: addMonths(join, plan.months), due: fee - paid, token: rtoken() };
     db.members.push(m);
     if (paid > 0) pay(m, paid, f.get('mode'), 'Admission', join);
     save(); closeSheet(); render(); toast(`${m.name} added`);
@@ -435,8 +600,10 @@ const handlers = {
   edit(f, id) {
     const m = getM(id), mobile = f.get('mobile').trim();
     if (db.members.some(x => x.id !== id && x.mobile === mobile)) return toast('This mobile number is already registered', true);
+    const changed = m.expiry !== f.get('expiry') || m.mobile !== mobile || m.joinDate !== f.get('joinDate') || m.name !== f.get('name').trim();
     Object.assign(m, { name: f.get('name').trim(), mobile, joinDate: f.get('joinDate'), expiry: f.get('expiry'), due: +f.get('due') || 0 });
-    save(); closeSheet(); render(); toast('Changes saved');
+    save(); render();
+    if (changed) qrSheet(id, 'Details updated. Send the updated card if the dates or number changed.'); else { closeSheet(); toast('Changes saved'); }
   },
   collect(f, id) {
     const m = getM(id), amt = Math.min(+f.get('amount'), m.due);
@@ -447,31 +614,42 @@ const handlers = {
     const m = getM(id), plan = db.plans.find(p => p.id === f.get('plan')), fee = +f.get('fee'), paid = Math.min(+f.get('paid'), fee);
     m.expiry = renewEnd(m, plan.id); m.planId = plan.id; m.planName = plan.name; m.fee = fee; m.due = (m.due || 0) + fee - paid;
     if (paid > 0) pay(m, paid, f.get('mode'), 'Renewal');
-    save(); closeSheet(); render(); toast(`Renewed until ${fmtDate(m.expiry)}`);
+    save(); render(); qrSheet(id, `Renewed until ${fmtDate(m.expiry)}. Send the updated card so the member has the new dates.`);
+  },
+  pin(f) {
+    if (f.get('pin') !== db.gym.pin) return toast('Wrong PIN', true);
+    ui.manualUntil = Date.now() + 5 * 60e3; closeSheet(); render();
   },
   settings(f) {
     const ids = f.getAll('pid'), names = f.getAll('pn'), months = f.getAll('pm'), fees = f.getAll('pf');
     if (!names.length) return toast('Keep at least one plan', true);
     db.plans = names.map((n, i) => ({ id: ids[i] || 'p' + Date.now().toString(36) + i, name: n.trim(), months: +months[i], fee: +fees[i] }));
-    db.gym.name = f.get('gym').trim();
+    db.gym.name = f.get('gym').trim(); db.gym.pin = f.get('pin').trim(); db.gym.eveningFrom = +f.get('ef') || 12;
     save(); closeSheet(); render(); toast('Settings saved');
   },
 };
 
 function seedDemo() {
   const names = ['Aman Verma', 'Priya Singh', 'Rahul Yadav', 'Neha Gupta', 'Vikas Chauhan', 'Sonia Mishra', 'Karan Patel', 'Anjali Rawat', 'Deepak Kumar', 'Pooja Sahu', 'Sandeep Thakur', 'Rekha Joshi', 'Mohit Saini', 'Kavita Pandey'];
-  const t = today(); db.members = []; db.payments = []; db.attendance = {};
+  const t = today(); db.members = []; db.payments = []; db.attendance = {}; db.checkins = {};
   names.forEach((n, i) => {
     const plan = db.plans[i % db.plans.length], join = addDays(t, -Math.floor(Math.random() * 120) - 2);
     const fee = plan.fee, due = i % 4 === 0 ? Math.round(fee * .4) : 0;
-    const m = { id: uid(), name: n, mobile: '9' + String(Math.floor(Math.random() * 1e9)).padStart(9, '0'), joinDate: join, planId: plan.id, planName: plan.name, fee, expiry: addMonths(join, plan.months), due };
+    const m = { id: uid(), name: n, mobile: '9' + String(Math.floor(Math.random() * 1e9)).padStart(9, '0'), joinDate: join, planId: plan.id, planName: plan.name, fee, expiry: addMonths(join, plan.months), due, token: rtoken() };
     if (i < 4) m.expiry = addDays(t, [1, 3, 6, -5][i]);
     db.members.push(m); pay(m, fee - due, ['Cash', 'UPI', 'Card'][i % 3], 'Admission', join);
   });
   for (let k = 0; k < 25; k++) {
     const d = addDays(t, -k); if (parse(d).getDay() === 0) continue;
     const ids = db.members.filter(m => m.expiry >= d && m.joinDate <= d && Math.random() > .45).map(m => m.id);
-    if (ids.length) db.attendance[d] = ids;
+    if (ids.length) {
+      db.attendance[d] = ids; db.checkins[d] = {};
+      ids.forEach(id => {
+        const v = [{ s: 'M', t: `${pad(6 + Math.floor(Math.random() * 3))}:${pad(Math.floor(Math.random() * 60))}` }];
+        if (Math.random() > .65) v.push({ s: 'E', t: `${pad(17 + Math.floor(Math.random() * 3))}:${pad(Math.floor(Math.random() * 60))}` });
+        db.checkins[d][id] = v;
+      });
+    }
   }
   save(); closeSheet(); render(); toast('Demo data loaded');
 }
@@ -496,12 +674,24 @@ const actions = {
       db.members = db.members.filter(x => x.id !== m.id); save(); closeSheet(); render(); toast('Member deleted');
     }
   },
+  camToggle: () => { if (scan.stream) { ui.camWanted = false; stopCam(); $('#camBtn').textContent = 'Start camera'; $('#scanMsg').textContent = 'Camera is off'; } else { ui.camWanted = true; startCam(); } },
+  simScan: () => { const m = getM($('#simSel').value); if (m) { scan.last = ''; onScan(`GYM:${m.id}:${m.token}`); } },
+  manual: () => {
+    if (!db.gym.pin) { toast('Set an owner PIN in Settings first', true); return settingsSheet(); }
+    openSheet('Owner PIN', `<form data-form="pin"><label>Enter PIN<input name="pin" type="password" inputmode="numeric" maxlength="4" required autofocus></label><button class="btn primary wide">Unlock manual entry</button></form>`);
+  },
+  qr: el => qrSheet(el.dataset.id),
+  qrSave: async el => { const f = await qrFile(getM(el.dataset.id)), a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); },
+  qrShare: async el => {
+    const m = getM(el.dataset.id), f = await qrFile(m);
+    if (navigator.canShare && navigator.canShare({ files: [f] })) navigator.share({ files: [f], text: `${m.name}, this is your entry QR for ${db.gym.name}. Show it at the gate.` }).catch(() => {});
+    else actions.qrSave(el);
+  },
+  qrNew: el => { const m = getM(el.dataset.id); if (confirm(`Make a new QR for ${m.name}? The old QR will stop working.`)) { m.token = rtoken(); save(); qrSheet(m.id); toast('New QR created'); } },
   att: el => {
-    const d = ui.attDate, list = db.attendance[d] || [], id = el.dataset.id, m = getM(id);
-    if (list.includes(id)) db.attendance[d] = list.filter(x => x !== id);
-    else { db.attendance[d] = [...list, id]; if (m.expiry < d) toast(`${m.name}'s membership has expired`, true); }
-    if (!db.attendance[d].length) delete db.attendance[d];
-    save(); $('#attBody').innerHTML = attDailyList();
+    const m = getM(el.dataset.id), r = checkIn(m);
+    toast(r.already ? `${m.name} already has a ${SESS[r.s].toLowerCase()} entry` : `${m.name} marked, ${SESS[r.s].toLowerCase()} ${r.t}`, r.already);
+    $('#attBody').innerHTML = attDailyList();
   },
   exportRep: exportReport, exportMembers, exportAtt: exportAttendance,
   settings: settingsSheet,
@@ -511,7 +701,7 @@ const actions = {
   backup: () => download(`gym-backup-${today()}.json`, JSON.stringify(db), 'application/json'),
   restore: () => $('#restoreFile').click(),
   demo: () => { if (!db.members.length || confirm('This replaces your current data with sample data. Continue?')) seedDemo(); },
-  reset: () => { if (confirm('Delete ALL members, payments and attendance? This cannot be undone.')) { db = { gym: db.gym, plans: db.plans, members: [], payments: [], attendance: {}, seq: 1 }; save(); closeSheet(); render(); toast('All data deleted'); } },
+  reset: () => { if (confirm('Delete ALL members, payments and attendance? This cannot be undone.')) { db = { gym: db.gym, plans: db.plans, members: [], payments: [], attendance: {}, checkins: {}, seq: 1 }; save(); closeSheet(); render(); toast('All data deleted'); } },
   install: async () => { if (!deferred) return; deferred.prompt(); await deferred.userChoice; deferred = null; $('#installBtn').hidden = true; },
 };
 document.addEventListener('click', e => {
@@ -544,12 +734,13 @@ document.addEventListener('change', e => {
       try {
         const d = JSON.parse(rd.result);
         if (!Array.isArray(d.members) || !Array.isArray(d.payments)) throw 0;
-        db = d; save(); closeSheet(); render(); toast('Backup restored');
+        db = normalize(d); save(); closeSheet(); render(); toast('Backup restored');
       } catch (_) { toast('This file is not a valid backup', true); }
     };
     rd.readAsText(t.files[0]); t.value = '';
   }
 });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeCam(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet(); });
 
 /* ---------- install + offline ---------- */
