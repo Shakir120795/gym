@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gym Manager</title>
+<meta name="theme-color" content="#1E2328">
+<meta name="description" content="Members, fees, attendance and reports for your gym">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span id="gymName">Gym Manager</span></div>
+  <div class="top-acts">
+    <button class="btn light small" id="installBtn" data-act="install" hidden>Install app</button>
+    <button class="ib dark" data-act="settings" aria-label="Settings" id="settingsBtn"></button>
+  </div>
+</header>
+<main id="view"></main>
+<nav class="tabs" id="tabs" aria-label="Main"></nav>
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-bg" data-act="closeSheet"></div>
+  <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="sheet-head">
+      <h2 id="sheetTitle"></h2>
+      <button class="ib" data-act="closeSheet" aria-label="Close">&times;</button>
+    </div>
+    <div class="sheet-body" id="sheetBody"></div>
+  </div>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+<input type="file" id="restoreFile" accept="application/json" hidden>
+<script src="app.js"></script>
+<script>if ('serviceWorker' in navigator) { window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(err => console.error('Service worker registration failed:', err))); }</script>
+</body>
+</html>
