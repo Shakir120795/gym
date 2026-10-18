@@ -4,13 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Gym Manager</title>
-<meta name="theme-color" content="#1E2328">
+<meta name="theme-color" content="#0B0D0F">
 <meta name="description" content="Members, fees, attendance and reports for your gym">
-<link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" href="icon-192.png">
-<link rel="apple-touch-icon" href="icon-192.png">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="no">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
@@ -20,7 +17,7 @@
 <header class="top">
   <div class="brand"><span id="gymName">Gym Manager</span></div>
   <div class="top-acts">
-    <button class="btn light small" id="installBtn" data-act="install" hidden>Install app</button>
+    <button class="sync" id="syncBtn" data-act="syncNow" hidden></button>
     <button class="ib dark" data-act="settings" aria-label="Settings" id="settingsBtn"></button>
   </div>
 </header>
@@ -37,10 +34,22 @@
     <div class="sheet-body" id="sheetBody"></div>
   </div>
 </div>
+<div id="login" hidden>
+  <form id="loginForm" autocomplete="on">
+    <h1>Gym Manager</h1>
+    <p>Sign in once on this phone. After that, every phone with the same account shows the same members and attendance.</p>
+    <label>Email<input name="email" type="email" required autocomplete="username"></label>
+    <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
+    <button class="btn primary wide">Sign in</button>
+    <p id="loginMsg" role="alert"></p>
+  </form>
+</div>
 <div id="toast" role="status" aria-live="polite"></div>
 <input type="file" id="restoreFile" accept="application/json" hidden>
+<script src="config.js"></script>
 <script src="qrcode.js"></script>
 <script src="jsqr.js"></script>
 <script src="app.js"></script>
+<script src="cloud.js"></script>
 </body>
 </html>

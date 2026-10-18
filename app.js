@@ -26,9 +26,18 @@ function normalize(d) {
   d.members.forEach(m => { if (!m.token) { m.token = rtoken(); normalize.fixed = true; } });
   return d;
 }
-function save() {
+function persist() {
   try { localStorage.setItem(KEY, JSON.stringify(db)); }
   catch (e) { toast('Could not save. Phone storage may be full.', true); }
+}
+function save() { persist(); if (window.cloud) cloud.touch(); }
+/* called after another phone's changes arrive */
+function refreshLive() {
+  if (ui.tab === 'attendance' && ui.attMode === 'scan') { const c = $('#scanCount'); if (c) c.innerHTML = countsLine(); return; }
+  if (!$('#sheet').hidden) return;
+  const a = document.activeElement;
+  if (a && /INPUT|SELECT|TEXTAREA/.test(a.tagName) && $('#view').contains(a)) return;
+  render();
 }
 
 /* ---------- helpers ---------- */
@@ -53,7 +62,7 @@ function checkIn(m, date = today(), time = nowTime()) {
   const day = (db.checkins[date] = db.checkins[date] || {}), list = (day[m.id] = day[m.id] || []);
   const s = sessionOf(time), ex = list.find(x => x.s === s);
   if (ex) return { already: true, s, t: ex.t };
-  list.push({ s, t: time });
+  list.push({ s, t: time }); list.sort((a, b) => a.t.localeCompare(b.t));
   const a = (db.attendance[date] = db.attendance[date] || []);
   if (!a.includes(m.id)) a.push(m.id);
   save(); return { already: false, s, t: time };
@@ -82,10 +91,16 @@ const I = {
 };
 const ic = (n, s = 22) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>`;
 
+const warnDays = () => +db.gym.warnDays || 10;
+const initials = n => String(n).trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+function avatar(m, size = 40) {
+  const k = status(m).key;
+  return `<span class="av ${k}" style="--sz:${size}px">${m.photo ? `<img src="${m.photo}" alt="">` : `<span>${esc(initials(m.name))}</span>`}</span>`;
+}
 function status(m) {
   const left = daysBetween(today(), m.expiry);
   if (left < 0) return { key: 'expired', label: `Expired ${-left}d ago`, left };
-  if (left <= 7) return { key: 'expiring', label: left === 0 ? 'Ends today' : `${left}d left`, left };
+  if (left < warnDays()) return { key: 'expiring', label: left === 0 ? 'Ends today' : `${left}d left`, left };
   return { key: 'active', label: `${left}d left`, left };
 }
 function pay(m, amount, mode, type, date) {
@@ -96,8 +111,18 @@ function waLink(m, kind) {
   const g = db.gym.name || 'our gym';
   const msg = kind === 'due'
     ? `Hi ${m.name}, your fees of ${inr(m.due)} are pending at ${g}. Please clear it when you visit. Thank you!`
+    : kind === 'welcome'
+    ? `Hi ${m.name}! Welcome to ${g}. Your ${m.planName} membership is valid till ${fmtDate(m.expiry)}. Please save this number. Show your QR entry card at the gate for entry.`
     : `Hi ${m.name}, your membership at ${g} ${m.expiry < today() ? 'ended' : 'ends'} on ${fmtDate(m.expiry)}. Please renew to keep your workouts going!`;
   return `https://wa.me/${phone91(m.mobile)}?text=${encodeURIComponent(msg)}`;
+}
+/* Plain <a target=_blank> links to wa.me silently fail on some phones, so the
+   WhatsApp buttons go through this instead: user tap -> open chat, with a
+   direct-navigation fallback if the popup is blocked. */
+function openWA(url) {
+  let w = null;
+  try { w = window.open(url, '_blank', 'noopener'); } catch (e) {}
+  if (!w) window.location.href = url;
 }
 function toast(msg, err) {
   const t = $('#toast');
@@ -125,7 +150,7 @@ const ui = {
   repMode: 'monthly', repDate: today(), repMonth: today().slice(0, 7),
 };
 const TABS = [['home', 'Home', 'home'], ['members', 'Members', 'members'], ['fees', 'Fees', 'fees'],
-  ['attendance', 'Attendance', 'attendance'], ['reminders', 'Reminders', 'bell'], ['reports', 'Reports', 'reports']];
+  ['attendance', 'Attendance', 'attendance'], ['reports', 'Reports', 'reports']];
 
 function render() {
   if (!(scan.stream && ui.tab === 'attendance' && ui.attMode === 'scan')) stopCam();
@@ -134,39 +159,68 @@ function render() {
   $('#settingsBtn').innerHTML = ic('gear', 24);
   $('#tabs').innerHTML = TABS.map(([k, l, i]) =>
     `<button class="${ui.tab === k ? 'on' : ''}" data-act="tab" data-k="${k}" ${ui.tab === k ? 'aria-current="page"' : ''}>${ic(i)}<span>${l}</span></button>`).join('');
-  const views = { home: viewHome, members: viewMembers, fees: viewFees, attendance: viewAttendance, reminders: viewReminders, reports: viewReports };
-  $('#view').innerHTML = views[ui.tab]();
+  const views = { home: viewHome, members: viewMembers, fees: viewFees, attendance: viewAttendance, reports: viewReports };
+  const v = $('#view');
+  v.innerHTML = views[ui.tab]();
+  v.classList.remove('vin'); void v.offsetWidth; v.classList.add('vin');
+  animCount();
   resumeCam();
 }
 function go(tab) { ui.tab = tab; render(); window.scrollTo(0, 0); }
 
 /* ---------- home ---------- */
+function animCount() {
+  let els = [];
+  try { els = [...document.querySelectorAll('#view [data-count]')]; } catch (e) { return; }
+  if (!els.length) return;
+  const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  els.forEach(el => {
+    const target = +el.dataset.count || 0, fmt = el.dataset.fmt;
+    const show = v => { el.textContent = fmt === 'inr' ? inr(v) : v.toLocaleString('en-IN'); };
+    if (reduce) { show(target); return; }
+    const t0 = performance.now(), dur = 800;
+    const step = t => {
+      const p = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - p, 3);
+      show(Math.round(target * e));
+      if (p < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+}
+function greeting() {
+  const h = new Date().getHours();
+  return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+}
 function viewHome() {
   const t = today(), ym = t.slice(0, 7), ms = db.members;
   const active = ms.filter(m => m.expiry >= t).length;
   const todayCol = sum(db.payments.filter(p => p.date === t));
   const monthCol = sum(db.payments.filter(p => p.date.startsWith(ym)));
-  const pend = ms.filter(m => m.due > 0);
+  const pend = ms.filter(m => m.due > 0), pendAmt = sum(pend.map(m => ({ amount: m.due })));
   const dc = dayCounts(t), came = dc.members;
-  const soon = ms.filter(m => { const l = daysBetween(t, m.expiry); return l >= 0 && l <= 7; }).sort((a, b) => a.expiry.localeCompare(b.expiry));
+  const soon = ms.filter(m => { const l = daysBetween(t, m.expiry); return l >= 0 && l < warnDays(); }).sort((a, b) => a.expiry.localeCompare(b.expiry));
+  const stat = (act, extra, cls, icon, val, fmt, label) =>
+    `<button class="stat" data-act="${act}" ${extra}><span class="sic ${cls}">${ic(icon, 22)}</span><span><b data-count="${val}"${fmt ? ` data-fmt="${fmt}"` : ''}>${fmt === 'inr' ? inr(val) : val}</b><small>${label}</small></span></button>`;
   return `
-  <section class="board">
-    <div><span class="lbl">Today's collection</span><div class="big">${inr(todayCol)}</div></div>
-    <div class="side"><div class="num">${came}</div><span class="lbl">came today</span><div class="mini" style="color:#B7BFC7;margin:2px 0 0">Morning ${dc.M}, evening ${dc.E}</div></div>
+  <section class="hero">
+    <div class="hero-top"><span>${greeting()}</span><span class="hero-pill">${came} came today</span></div>
+    <span class="lbl">Today's collection</span>
+    <div class="big" data-count="${todayCol}" data-fmt="inr">${inr(todayCol)}</div>
+    <div class="hero-sub"><span>Morning ${dc.M}</span><i></i><span>Evening ${dc.E}</span><i></i><span>${fmtDate(t)}</span></div>
   </section>
-  <div class="tiles">
-    <button class="tile t-blue" data-act="tab" data-k="members"><span class="lbl">Total members</span><span class="num">${ms.length}</span></button>
-    <button class="tile t-green" data-act="goFilter" data-f="active"><span class="lbl">Active members</span><span class="num">${active}</span></button>
-    <button class="tile t-blue" data-act="tab" data-k="reports"><span class="lbl">This month's earning</span><span class="num">${inr(monthCol)}</span></button>
-    <button class="tile t-red" data-act="goFees"><span class="lbl">Pending fees</span><span class="num">${inr(sum(pend.map(m => ({ amount: m.due }))))}</span><small>${pend.length} member${pend.length === 1 ? '' : 's'}</small></button>
+  <div class="stats">
+    ${stat('tab', 'data-k="members"', 's-b', 'members', ms.length, '', 'Total members')}
+    ${stat('goFilter', 'data-f="active"', 's-g', 'check', active, '', 'Active members')}
+    ${stat('tab', 'data-k="reports"', 's-g', 'reports', monthCol, 'inr', "This month's earning")}
+    ${stat('goFees', '', 's-r', 'fees', pendAmt, 'inr', `Pending fees \u00b7 ${pend.length}`)}
   </div>
   <div class="quick">
     <button class="btn primary" data-act="add">${ic('plus', 20)} Add member</button>
     <button class="btn" data-act="tab" data-k="attendance">${ic('check', 20)} Scan entry</button>
   </div>
-  <h2>Membership ending this week</h2>
-  ${soon.length ? `<div class="list">${soon.slice(0, 6).map(memberRow).join('')}</div>${soon.length > 6 ? `<p class="mini">${soon.length - 6} more in Reminders</p>` : ''}`
-      : `<div class="list"><div class="empty">${ms.length ? 'No memberships ending in the next 7 days.' : 'Add your first member to get started.'}</div></div>`}
+  <h2>Membership ending soon</h2>
+  ${soon.length ? `<div class="list">${soon.slice(0, 6).map(memberRow).join('')}</div>${soon.length > 6 ? `<p class="mini">${soon.length - 6} more in Fees \u2192 Reminders</p>` : ''}`
+      : `<div class="list"><div class="empty">${ms.length ? 'No memberships ending soon.' : 'Add your first member to get started.'}</div></div>`}
   `;
 }
 
@@ -174,7 +228,7 @@ function viewHome() {
 function memberRow(m) {
   const s = status(m);
   return `<button class="row" data-act="member" data-id="${m.id}">
-    <span class="plate ${s.key}"></span>
+    ${avatar(m, 40)}
     <span class="who"><b>${esc(m.name)}</b><small>${esc(m.mobile)}</small></span>
     <span class="right"><span class="tag ${s.key}">${s.label}</span>${m.due > 0 ? `<small class="due">Due ${inr(m.due)}</small>` : ''}</span>
   </button>`;
@@ -202,23 +256,25 @@ function viewMembers() {
 /* ---------- fees ---------- */
 function viewFees() {
   const t = today();
-  const tabs = [['pending', 'Pending'], ['expiring', 'Expiring'], ['history', 'Payment history']];
+  const tabs = [['pending', 'Pending'], ['expiring', 'Expiring'], ['remind', 'Reminders'], ['history', 'Payment history']];
   let body = '';
   if (ui.feeTab === 'pending') {
     const p = db.members.filter(m => m.due > 0).sort((a, b) => b.due - a.due);
     body = `<p class="sum">Total pending <b>${inr(sum(p.map(m => ({ amount: m.due }))))}</b></p>` +
-      (p.length ? `<div class="list">${p.map(m => `<div class="row"><span class="plate ${status(m).key}"></span>
+      (p.length ? `<div class="list">${p.map(m => `<div class="row">${avatar(m, 38)}
         <button class="who" style="background:none;border:0;text-align:left;padding:0" data-act="member" data-id="${m.id}"><b>${esc(m.name)}</b><small>${esc(m.mobile)}</small></button>
         <span class="amt due">${inr(m.due)}</span><button class="ib txt" data-act="collect" data-id="${m.id}">Collect</button></div>`).join('')}</div>`
         : '<div class="list"><div class="empty">No pending fees. Everyone is paid up.</div></div>');
   } else if (ui.feeTab === 'expiring') {
-    const soon = db.members.filter(m => { const l = daysBetween(t, m.expiry); return l >= 0 && l <= 7; }).sort((a, b) => a.expiry.localeCompare(b.expiry));
+    const soon = db.members.filter(m => { const l = daysBetween(t, m.expiry); return l >= 0 && l < warnDays(); }).sort((a, b) => a.expiry.localeCompare(b.expiry));
     const gone = db.members.filter(m => m.expiry < t).sort((a, b) => b.expiry.localeCompare(a.expiry));
-    const row = m => `<div class="row"><span class="plate ${status(m).key}"></span>
+    const row = m => `<div class="row">${avatar(m, 38)}
       <button class="who" style="background:none;border:0;text-align:left;padding:0" data-act="member" data-id="${m.id}"><b>${esc(m.name)}</b><small>Ends ${fmtDate(m.expiry)}</small></button>
       <button class="ib txt" data-act="renew" data-id="${m.id}">Renew</button></div>`;
-    body = `<h2 style="margin-top:6px">Ending in 7 days</h2><div class="list">${soon.length ? soon.map(row).join('') : '<div class="empty">Nobody is ending this week.</div>'}</div>
+    body = `<h2 style="margin-top:6px">Ending in less than ${warnDays()} days</h2><div class="list">${soon.length ? soon.map(row).join('') : '<div class="empty">Nobody is ending soon.</div>'}</div>
       <h2>Already expired</h2><div class="list">${gone.length ? gone.map(row).join('') : '<div class="empty">No expired members.</div>'}</div>`;
+  } else if (ui.feeTab === 'remind') {
+    body = viewReminders();
   } else {
     const ps = [...db.payments].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 200);
     body = `<p class="sum">${ps.length ? `Last ${ps.length} payments, total <b>${inr(sum(ps))}</b>` : ''}</p>` +
@@ -337,9 +393,33 @@ function beep(ok) {
   } catch (e) {}
   if (navigator.vibrate) navigator.vibrate(ok ? 80 : [180, 80, 180]);
 }
-function showRes(cls, title, lines, m, btn) {
+function speak(text) {
+  if ((db.gym.voice || 'en') === 'off' || !('speechSynthesis' in window)) return;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = db.gym.voice === 'hi' ? 'hi-IN' : 'en-IN'; u.rate = .95;
+    speechSynthesis.speak(u);
+  } catch (e) {}
+}
+const VOICE = {
+  en: {
+    welcome: n => `Welcome ${n}.`,
+    ends: d => `Your membership ends ${d === 0 ? 'today' : d === 1 ? 'tomorrow' : 'in ' + d + ' days'}. Please renew.`,
+    expired: n => `${n}, your membership has expired.`, dup: n => `${n}, already checked in.`, bad: () => 'Invalid QR code.',
+  },
+  hi: {
+    welcome: n => `स्वागत है ${n}.`,
+    ends: d => `आपकी मेंबरशिप ${d === 0 ? 'आज' : d === 1 ? 'कल' : d + ' दिन में'} खत्म हो रही है। कृपया रिन्यू कराएं।`,
+    expired: n => `${n}, आपकी मेंबरशिप खत्म हो चुकी है।`, dup: n => `${n}, आपकी एंट्री पहले ही हो चुकी है।`, bad: () => 'गलत क्यू आर कोड।',
+  },
+};
+const VL = () => VOICE[db.gym.voice === 'hi' ? 'hi' : 'en'];
+function showRes(cls, m, title, lines, btn) {
   const el = $('#scanRes'); if (!el) return;
-  el.innerHTML = `<div class="scanres ${cls}"><h3>${title}</h3>${lines.map(l => `<div>${l}</div>`).join('')}${btn ? `<button class="btn light small" style="margin-top:10px" data-act="renew" data-id="${m.id}">Renew now</button>` : ''}</div>`;
+  el.innerHTML = `<div class="scanres ${cls}"><div class="resrow">${m ? avatar(m, 88) : ''}<div class="restxt"><h3>${title}</h3>${lines.map(l => `<div>${l}</div>`).join('')}</div></div>
+    ${m && m.due > 0 ? `<div class="dueline">Due ${inr(m.due)}</div>` : ''}
+    ${btn ? `<button class="btn light small" style="margin-top:10px" data-act="renew" data-id="${m.id}">Renew now</button>` : ''}</div>`;
   const c = $('#scanCount'); if (c) c.innerHTML = countsLine();
   clearTimeout(scan.hide); scan.hide = setTimeout(() => { const e = $('#scanRes'); if (e) e.innerHTML = ''; }, 7000);
 }
@@ -349,17 +429,18 @@ function onScan(data) {
   if (data === scan.last && now - scan.lastAt < 6000) { scan.lastAt = now; return; }
   scan.last = data; scan.lastAt = now;
   const p = String(data).split(':'), m = p[0] === 'GYM' && getM(p[1]);
-  if (!m) { beep(false); return showRes('stop', 'Member not found', ['This QR was made in a different app or on another phone, or the member was deleted.', 'Open the member here and use their QR entry card from this app.']); }
-  if (m.token !== p[2]) { beep(false); return showRes('stop', esc(m.name), ['This is an old QR card.', 'Please use the latest QR card from the gym.']); }
+  if (!m) { beep(false); speak(VL().bad()); return showRes('stop', null, 'Member not found', ['This QR was made in a different app or on another phone, or the member was deleted.', 'Open the member here and use their QR entry card from this app.']); }
+  if (m.token !== p[2]) { beep(false); speak(VL().bad()); return showRes('stop', m, esc(m.name), ['This is an old QR card.', 'Please use the latest QR card from the gym.']); }
   const s = status(m);
-  if (s.key === 'expired') { beep(false); return showRes('stop', esc(m.name), [`Membership ended on ${fmtDate(m.expiry)}.`, 'Entry not allowed. Please renew first.'], m, true); }
+  if (s.key === 'expired') { beep(false); speak(VL().expired(m.name)); return showRes('stop', m, esc(m.name), [`Membership ended on ${fmtDate(m.expiry)}.`, 'Entry not allowed. Please renew first.'], true); }
   const r = checkIn(m);
-  if (r.already) { beep(false); return showRes('dup', esc(m.name), [`Already checked in for ${SESS[r.s].toLowerCase()} at ${r.t}.`]); }
+  if (r.already) { beep(false); speak(VL().dup(m.name)); return showRes('dup', m, esc(m.name), [`Already checked in for ${SESS[r.s].toLowerCase()} at ${r.t}.`]); }
   beep(true);
   const lines = [`${SESS[r.s]} entry at ${r.t}`];
-  if (s.key === 'expiring') lines.push(`Membership ends ${s.left === 0 ? 'today' : 'in ' + s.left + ' days'}. Please renew.`); else lines.push(`Valid till ${fmtDate(m.expiry)}, ${s.left} days left`);
-  if (m.due > 0) lines.push(`Fees pending ${inr(m.due)}`);
-  showRes(s.key === 'expiring' || m.due > 0 ? 'warn' : 'ok', 'Welcome, ' + esc(m.name), lines);
+  if (s.key === 'expiring') lines.push(`Membership ends ${s.left === 0 ? 'today' : 'in ' + s.left + ' days'} (${fmtDate(m.expiry)}). Please renew.`);
+  else lines.push(`Valid till ${fmtDate(m.expiry)}, ${s.left} days left`);
+  speak(VL().welcome(m.name) + (s.key === 'expiring' ? ' ' + VL().ends(s.left) : ''));
+  showRes(s.key === 'expiring' || m.due > 0 ? 'warn' : 'ok', m, esc(m.name), lines);
 }
 
 /* ---------- QR card ---------- */
@@ -368,8 +449,8 @@ function qrCardUrl(m) {
   const n = qr.getModuleCount(), cell = Math.floor(440 / (n + 8)), size = cell * (n + 8);
   const W = 600, H = 960, c = document.createElement('canvas'); c.width = W; c.height = H;
   const x = c.getContext('2d');
-  x.fillStyle = '#1E2328'; x.fillRect(0, 0, W, H);
-  x.fillStyle = '#1D56B0'; x.fillRect(0, 118, W, 8);
+  x.fillStyle = '#14161A'; x.fillRect(0, 0, W, H);
+  x.fillStyle = '#E8B84B'; x.fillRect(0, 118, W, 8);
   x.fillStyle = '#fff'; x.textAlign = 'center';
   x.font = "700 56px 'Barlow Condensed','Arial Narrow',sans-serif"; x.fillText((db.gym.name || 'Gym').slice(0, 24), W / 2, 84);
   const ox = Math.round((W - size) / 2), oy = 160;
@@ -401,24 +482,43 @@ function qrSheet(id, note) {
     <button class="btn danger small" style="margin-top:12px" data-act="qrNew" data-id="${id}">Make a new QR (old one stops working)</button>`);
 }
 
+/* ---------- recent visits ---------- */
+function recentVisits(id) {
+  const days = Object.keys(db.checkins).filter(d => (db.checkins[d][id] || []).length).sort().reverse().slice(0, 7);
+  if (!days.length) return '<div class="list"><div class="empty">No visits yet.</div></div>';
+  return `<div class="list">${days.map(d => `<div class="row"><span class="who"><b>${fmtDate(d)}</b></span><span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${visitTags(db.checkins[d][id])}</span></div>`).join('')}</div>`;
+}
+function fallbackCopy(text, done) {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); done(); } catch (e) { toast('Copy failed', true); }
+  ta.remove();
+}
+function copyText(text) {
+  const done = () => toast('List copied');
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+  else fallbackCopy(text, done);
+}
+
 /* ---------- reminders ---------- */
 function remRow(m, kind) {
   const s = status(m);
-  return `<div class="row"><span class="plate ${s.key}"></span>
+  return `<div class="row">${avatar(m, 40)}
     <button class="who" style="background:none;border:0;text-align:left;padding:0" data-act="member" data-id="${m.id}"><b>${esc(m.name)}</b><small>${kind === 'due' ? 'Pending ' + inr(m.due) : (s.key === 'expired' ? 'Ended ' : 'Ends ') + fmtDate(m.expiry)}</small></button>
     <span class="acts"><a class="ib" href="tel:${esc(m.mobile)}" aria-label="Call ${esc(m.name)}">${ic('phone', 20)}</a>
-    <a class="ib" href="${waLink(m, kind)}" target="_blank" rel="noopener" aria-label="WhatsApp ${esc(m.name)}">${ic('chat', 20)}</a>
+    <button class="ib" data-act="wa" data-id="${m.id}" data-k="${kind}" aria-label="WhatsApp ${esc(m.name)}">${ic('chat', 20)}</button>
     <button class="ib txt" data-act="${kind === 'due' ? 'collect' : 'renew'}" data-id="${m.id}">${kind === 'due' ? 'Collect' : 'Renew'}</button></span></div>`;
 }
 function viewReminders() {
   const t = today(), ms = db.members;
-  const soon = ms.filter(m => { const l = daysBetween(t, m.expiry); return l >= 0 && l <= 7; }).sort((a, b) => a.expiry.localeCompare(b.expiry));
+  const soon = ms.filter(m => { const l = daysBetween(t, m.expiry); return l >= 0 && l < warnDays(); }).sort((a, b) => a.expiry.localeCompare(b.expiry));
   const gone = ms.filter(m => m.expiry < t).sort((a, b) => b.expiry.localeCompare(a.expiry));
   const due = ms.filter(m => m.due > 0).sort((a, b) => b.due - a.due);
-  const sec = (title, arr, kind, none) => `<h2>${title} (${arr.length})</h2><div class="list">${arr.length ? arr.map(m => remRow(m, kind)).join('') : `<div class="empty">${none}</div>`}</div>`;
+  const sec = (title, arr, kind, none, copyK) => `<div class="sechd"><h2>${title} (${arr.length})</h2>${arr.length && copyK ? `<button class="btn ghost small" data-act="copyRem" data-k="${copyK}">Copy list</button>` : ''}</div><div class="list">${arr.length ? arr.map(m => remRow(m, kind)).join('') : `<div class="empty">${none}</div>`}</div>`;
   return `<p class="sum" style="margin-top:0">Tap the chat icon to send a ready WhatsApp message, or the phone icon to call.</p>` +
-    sec('Ending in 7 days', soon, 'exp', 'Nobody is ending this week.') +
-    sec('Fees pending', due, 'due', 'No pending fees.') +
+    sec(`Ending in less than ${warnDays()} days`, soon, 'exp', 'Nobody is ending soon.', 'soon') +
+    sec('Fees pending', due, 'due', 'No pending fees.', 'due') +
     sec('Already expired', gone, 'exp', 'No expired members.');
 }
 
@@ -440,18 +540,27 @@ function viewReports() {
   const byMode = ['Cash', 'UPI', 'Card'].map(k => [k, sum(r.pays.filter(p => p.mode === k))]).filter(x => x[1] > 0);
   const perDay = {}; r.pays.forEach(p => perDay[p.date] = (perDay[p.date] || 0) + p.amount);
   const simple = (arr, fn) => arr.length ? `<div class="list">${arr.map(fn).join('')}</div>` : '<div class="list"><div class="empty">Nothing in this period.</div></div>';
+  const cameN = r.daily ? dayCounts(r.key).members : monthAtt(r.key).rows.length;
+  const cameSub = r.daily ? `M ${dayCounts(r.key).M}, E ${dayCounts(r.key).E}` : `${monthAtt(r.key).total} member-days`;
+  const pendAmt = sum(r.pending.map(m => ({ amount: m.due })));
+  const total = sum(r.pays);
+  const rstat = (cls, icon, val, fmt, label) =>
+    `<div class="stat"><span class="sic ${cls}">${ic(icon, 22)}</span><span><b data-count="${val}"${fmt ? ` data-fmt="${fmt}"` : ''}>${fmt === 'inr' ? inr(val) : val}</b><small>${label}</small></span></div>`;
   return `
   <div class="seg"><button class="${r.daily ? 'on' : ''}" data-act="repMode" data-k="daily">Daily</button><button class="${!r.daily ? 'on' : ''}" data-act="repMode" data-k="monthly">Monthly</button></div>
   <div class="bar">${r.daily ? `<input type="date" id="repDate" value="${ui.repDate}">` : `<input type="month" id="repMonth" value="${ui.repMonth}">`}
     <button class="btn primary small" data-act="exportRep">Export Excel</button></div>
-  <section class="board"><div><span class="lbl">Collection, ${r.label}</span><div class="big">${inr(sum(r.pays))}</div>
-    ${byMode.length ? `<div class="mini" style="color:#B7BFC7">${byMode.map(([k, v]) => `${k} ${inr(v)}`).join('   ')}</div>` : ''}</div></section>
-  <div class="tiles">
-    <div class="tile t-green"><span class="lbl">New admissions</span><span class="num">${r.admissions.length}</span></div>
-    <div class="tile t-yellow"><span class="lbl">Expired members</span><span class="num">${r.expired.length}</span></div>
-    ${r.daily ? `<div class="tile t-blue"><span class="lbl">Members came</span><span class="num">${dayCounts(r.key).members}</span><small>Morning ${dayCounts(r.key).M}, evening ${dayCounts(r.key).E}</small></div>`
-      : `<div class="tile t-blue"><span class="lbl">Members came</span><span class="num">${monthAtt(r.key).rows.length}</span><small>${monthAtt(r.key).total} member-days</small></div>`}
-    <div class="tile t-red"><span class="lbl">Pending payments right now</span><span class="num">${inr(sum(r.pending.map(m => ({ amount: m.due }))))}</span><small>${r.pending.length} members</small></div>
+  <section class="hero">
+    <div class="hero-top"><span>${r.daily ? 'Daily' : 'Monthly'} report</span><span class="hero-pill">${r.label}</span></div>
+    <span class="lbl">Collection</span>
+    <div class="big" data-count="${total}" data-fmt="inr">${inr(total)}</div>
+    ${byMode.length ? `<div class="hero-sub">${byMode.map(([k, v]) => `<span>${k} ${inr(v)}</span>`).join('<i></i>')}</div>` : ''}
+  </section>
+  <div class="stats">
+    ${rstat('s-g', 'plus', r.admissions.length, '', 'New admissions')}
+    ${rstat('s-r', 'members', r.expired.length, '', 'Expired members')}
+    ${rstat('s-b', 'check', cameN, '', `Members came · ${cameSub}`)}
+    ${rstat('s-r', 'fees', pendAmt, 'inr', `Pending now · ${r.pending.length}`)}
   </div>
   ${!r.daily && Object.keys(perDay).length ? `<h2>Day-wise collection</h2><div class="list repdays">${Object.keys(perDay).sort().map(d => `<div class="row"><span class="who"><b>${fmtDate(d)}</b></span><span class="amt">${inr(perDay[d])}</span></div>`).join('')}</div>` : ''}
   <h2>Payments received</h2>${simple(r.pays, p => `<div class="row"><span class="who"><b>${esc(p.name)}</b><small>${r.daily ? '' : fmtDate(p.date) + ', '}${esc(p.mode)}, ${esc(p.type)}</small></span><span class="amt">${inr(p.amount)}</span></div>`)}
@@ -475,8 +584,8 @@ function exportReport() {
   download(`gym-report-${r.key}.csv`, csv(rows));
 }
 function exportMembers() {
-  const rows = [['Name', 'Mobile', 'Joining date', 'Plan', 'Plan fee', 'Membership ends', 'Status', 'Fees due']];
-  db.members.forEach(m => rows.push([m.name, txt(m.mobile), m.joinDate, m.planName, m.fee, m.expiry, status(m).key, m.due || 0]));
+  const rows = [['Name', 'Mobile', 'Gender', 'Address', 'Joining date', 'Plan', 'Plan fee', 'Membership ends', 'Status', 'Fees due']];
+  db.members.forEach(m => rows.push([m.name, txt(m.mobile), m.gender || '', m.address || '', m.joinDate, m.planName, m.fee, m.expiry, status(m).key, m.due || 0]));
   download(`gym-members-${today()}.csv`, csv(rows));
 }
 function exportAttendance() {
@@ -500,11 +609,31 @@ function closeSheet() { $('#sheet').hidden = true; document.body.classList.remov
 const modeSelect = () => `<label>Payment mode<select name="mode"><option>Cash</option><option>UPI</option><option>Card</option></select></label>`;
 const planOptions = sel => db.plans.map(p => `<option value="${p.id}" ${p.id === sel ? 'selected' : ''}>${esc(p.name)} (${inr(p.fee)})</option>`).join('');
 
+function photoField(m) {
+  return `<div class="photo"><span id="photoPrev">${m ? avatar(m, 72) : '<span class="av none" style="--sz:72px"><span>+</span></span>'}</span>
+    <div><button type="button" class="btn ghost small" data-act="pickPhoto">${m && m.photo ? 'Change photo' : 'Add photo'}</button><div class="mini" style="margin-top:4px">Camera or gallery</div></div>
+    <input type="file" id="photoFile" accept="image/*" hidden><input type="hidden" name="photo" id="photoVal" value="${m ? m.photo || '' : ''}"></div>`;
+}
+function genderAddress(m, req) {
+  const g = (m && m.gender) || '';
+  return `<div class="two"><label>Gender<select name="gender" ${req ? 'required' : ''}><option value="" ${g ? '' : 'selected'} ${req ? 'disabled' : ''}>Select</option>${['Male', 'Female', 'Other'].map(x => `<option ${g === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
+    <label>Address<input name="address" value="${esc(m ? m.address : '')}" placeholder="Area / city"></label></div>`;
+}
+async function photoFromFile(file) {
+  const url = URL.createObjectURL(file), img = new Image();
+  img.src = url; await img.decode();
+  const S = 144, c = document.createElement('canvas'); c.width = c.height = S;
+  const side = Math.min(img.naturalWidth, img.naturalHeight);
+  c.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, S, S);
+  URL.revokeObjectURL(url);
+  return c.toDataURL('image/jpeg', .7);
+}
 function addForm() {
   const p = db.plans[0] || { fee: 0 };
   openSheet('Add member', `<form data-form="add" autocomplete="off">
-    <label>Name<input name="name" required></label>
+    ${photoField()}<label>Name<input name="name" required></label>
     <label>Mobile number<input name="mobile" type="tel" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" required placeholder="10 digit number"></label>
+    ${genderAddress(null, true)}
     <label>Joining date<input name="joinDate" type="date" required value="${today()}"></label>
     <label>Plan<select name="plan" id="planSel">${planOptions()}</select></label>
     <div class="two"><label>Plan fee<input name="fee" id="feeIn" type="number" min="0" required value="${p.fee}"></label>
@@ -515,8 +644,9 @@ function addForm() {
 function editForm(id) {
   const m = getM(id);
   openSheet('Edit member', `<form data-form="edit" data-id="${id}" autocomplete="off">
-    <label>Name<input name="name" required value="${esc(m.name)}"></label>
+    ${photoField(m)}<label>Name<input name="name" required value="${esc(m.name)}"></label>
     <label>Mobile number<input name="mobile" type="tel" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" required value="${esc(m.mobile)}"></label>
+    ${genderAddress(m, false)}
     <label>Joining date<input name="joinDate" type="date" required value="${m.joinDate}"></label>
     <label>Membership ends on<input name="expiry" type="date" required value="${m.expiry}"></label>
     <label>Fees due<input name="due" type="number" min="0" value="${m.due || 0}"></label>
@@ -526,7 +656,7 @@ function collectForm(id) {
   const m = getM(id);
   if (!(m.due > 0)) return toast('No pending fees for ' + m.name);
   openSheet('Collect fees', `<form data-form="collect" data-id="${id}">
-    <div class="hdrline"><span class="plate ${status(m).key}"></span><div><b>${esc(m.name)}</b><br><span class="due">Pending ${inr(m.due)}</span></div></div>
+    <div class="hdrline">${avatar(m, 44)}<div><b>${esc(m.name)}</b><br><span class="due">Pending ${inr(m.due)}</span></div></div>
     <label>Amount received<input name="amount" type="number" min="1" max="${m.due}" required value="${m.due}"></label>
     ${modeSelect()}
     <button class="btn primary wide">Save payment</button></form>`);
@@ -538,7 +668,7 @@ function renewEnd(m, planId) {
 function renewForm(id) {
   const m = getM(id), plan = db.plans.find(p => p.id === m.planId) || db.plans[0];
   openSheet('Renew membership', `<form data-form="renew" data-id="${id}">
-    <div class="hdrline"><span class="plate ${status(m).key}"></span><div><b>${esc(m.name)}</b><br><small>Currently ends ${fmtDate(m.expiry)}</small></div></div>
+    <div class="hdrline">${avatar(m, 44)}<div><b>${esc(m.name)}</b><br><small>Currently ends ${fmtDate(m.expiry)}</small></div></div>
     <label>Plan<select name="plan" id="planSel">${planOptions(plan.id)}</select></label>
     <p class="mini" style="margin:8px 0 0">New end date: <b id="newEnd">${fmtDate(renewEnd(m, plan.id))}</b></p>
     <div class="two"><label>Plan fee<input name="fee" id="feeIn" type="number" min="0" required value="${plan.fee}"></label>
@@ -551,19 +681,21 @@ function memberSheet(id) {
   const pays = db.payments.filter(p => p.memberId === id).sort((a, b) => b.date.localeCompare(a.date));
   const visits = Object.keys(db.attendance).filter(d => d.startsWith(ym) && db.attendance[d].includes(id)).length;
   openSheet(m.name, `
-    <div class="hdrline"><span class="plate ${s.key}"></span><span class="tag ${s.key}">${s.label}</span></div>
-    <dl class="kv"><dt>Mobile</dt><dd>${esc(m.mobile)}</dd><dt>Plan</dt><dd>${esc(m.planName)}</dd><dt>Joined</dt><dd>${fmtDate(m.joinDate)}</dd>
+    <div class="hdrline">${avatar(m, 88)}<div><b style="font:700 28px var(--head)">${esc(m.name)}</b><br><span class="tag ${s.key}">${s.label}</span></div></div>
+    <dl class="kv"><dt>Mobile</dt><dd>${esc(m.mobile)}</dd><dt>Gender</dt><dd>${esc(m.gender || '-')}</dd><dt>Address</dt><dd>${esc(m.address || '-')}</dd><dt>Plan</dt><dd>${esc(m.planName)}</dd><dt>Joined</dt><dd>${fmtDate(m.joinDate)}</dd>
     <dt>Membership ends</dt><dd>${fmtDate(m.expiry)}</dd><dt>Fees due</dt><dd class="${m.due > 0 ? 'due' : ''}">${inr(m.due)}</dd><dt>Visits this month</dt><dd>${visits}</dd></dl>
     <div class="actions">
       <button class="btn primary" data-act="renew" data-id="${id}">Renew</button>
       <button class="btn" data-act="collect" data-id="${id}" ${m.due > 0 ? '' : 'disabled style="opacity:.4"'}>Collect fees</button>
       <a class="btn ghost" href="tel:${esc(m.mobile)}">${ic('phone', 18)} Call</a>
-      <a class="btn ghost" href="${waLink(m, m.due > 0 ? 'due' : 'exp')}" target="_blank" rel="noopener">${ic('chat', 18)} WhatsApp</a>
+      <button class="btn ghost" data-act="wa" data-id="${id}" data-k="${m.due > 0 ? 'due' : 'exp'}">${ic('chat', 18)} WhatsApp</button>
       <button class="btn ghost" data-act="edit" data-id="${id}">Edit</button>
       <button class="btn danger" data-act="del" data-id="${id}">Delete</button>
       <button class="btn" style="grid-column:1/-1" data-act="qr" data-id="${id}">QR entry card</button></div>
-    <h3 style="font-size:20px;margin:6px 0 8px">Payment history</h3>
-    ${pays.length ? `<div class="list">${pays.map(p => `<div class="row"><span class="who"><b>${fmtDate(p.date)}</b><small>${esc(p.mode)}, ${esc(p.type)}</small></span><span class="amt">${inr(p.amount)}</span></div>`).join('')}</div>` : '<div class="list"><div class="empty">No payments yet.</div></div>'}`);
+    <h3 style="font-size:20px;margin:6px 0 8px">Recent visits</h3>
+    ${recentVisits(id)}
+    <h3 style="font-size:20px;margin:14px 0 8px">Payment history</h3>
+    ${pays.length ? `<div class="list">${pays.map(p => `<div class="row"><span class="who"><b>${fmtDate(p.date)}</b><small>${esc(p.mode)}, ${esc(p.type)}</small></span><span class="amt">${inr(p.amount)}</span><button class="ib" data-act="delPay" data-id="${p.id}" aria-label="Delete this payment">&times;</button></div>`).join('')}</div>` : '<div class="list"><div class="empty">No payments yet.</div></div>'}`);
 }
 function planRow(p = {}) {
   return `<div class="planrow"><input type="hidden" name="pid" value="${esc(p.id || '')}">
@@ -577,6 +709,8 @@ function settingsSheet() {
     <label>Gym name<input name="gym" required value="${esc(db.gym.name)}"></label>
     <div class="two"><label>Owner PIN (4 digits)<input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" value="${esc(db.gym.pin || '')}" placeholder="For manual entry"></label>
     <label>Evening starts at (hour)<input name="ef" type="number" min="1" max="23" value="${db.gym.eveningFrom || 12}"></label></div>
+    <div class="two"><label>Gate voice<select name="voice">${[['en', 'English'], ['hi', 'Hindi'], ['off', 'Off']].map(([k, l]) => `<option value="${k}" ${(db.gym.voice || 'en') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+    <label>Warn before expiry (days)<input name="warn" type="number" min="1" max="60" value="${warnDays()}"></label></div>
     <h3 style="font-size:20px;margin:20px 0 0">Membership plans</h3>
     <div id="plans">${db.plans.map(planRow).join('')}</div>
     <button type="button" class="btn ghost small" style="margin-top:10px" data-act="addPlan">Add plan</button>
@@ -584,7 +718,10 @@ function settingsSheet() {
     <hr><h3 style="font-size:20px;margin:0 0 8px">Backup</h3>
     <p class="mini" style="margin:0 0 10px">Data lives on this phone or computer only. Download a backup regularly.</p>
     <div class="actions"><button class="btn ghost" data-act="backup">Download backup</button><button class="btn ghost" data-act="restore">Restore backup</button></div>
-    <hr><div class="actions"><button class="btn ghost" data-act="demo">Load demo data</button><button class="btn danger" data-act="reset">Delete all data</button></div>`);
+    <hr><h3 style="font-size:20px;margin:0 0 8px">Cloud sync</h3>
+    <p class="mini" style="margin:0 0 10px">${esc(window.cloud ? cloud.statusText() : '')}</p>
+    ${window.cloud && cloud.enabled ? `<div class="actions"><button class="btn ghost" data-act="syncNow">Sync now</button><button class="btn ghost" data-act="logout">Log out</button></div>` : ''}
+    <hr><div class="actions">${window.cloud && cloud.enabled ? '' : '<button class="btn ghost" data-act="demo">Load demo data</button>'}<button class="btn danger" data-act="reset">Delete all data</button></div>`);
 }
 
 /* ---------- form handlers ---------- */
@@ -594,16 +731,23 @@ const handlers = {
     if (db.members.some(m => m.mobile === mobile)) return toast('This mobile number is already registered', true);
     const plan = db.plans.find(p => p.id === f.get('plan')); if (!plan) return toast('Add a plan in Settings first', true);
     const fee = +f.get('fee'), paid = Math.min(+f.get('paid'), fee), join = f.get('joinDate');
-    const m = { id: uid(), name: f.get('name').trim(), mobile, joinDate: join, planId: plan.id, planName: plan.name, fee, expiry: addMonths(join, plan.months), due: fee - paid, token: rtoken() };
+    const m = { id: uid(), name: f.get('name').trim(), mobile, joinDate: join, planId: plan.id, planName: plan.name, fee, expiry: addMonths(join, plan.months), due: fee - paid, token: rtoken(), gender: f.get('gender') || '', address: (f.get('address') || '').trim(), photo: f.get('photo') || '' };
     db.members.push(m);
     if (paid > 0) pay(m, paid, f.get('mode'), 'Admission', join);
-    save(); closeSheet(); render(); toast(`${m.name} added`);
+    save(); render();
+    openSheet(`${m.name} added`, `
+      <div class="hdrline">${avatar(m, 44)}<div><b>${esc(m.name)}</b><br><small>${esc(m.planName)}, valid till ${fmtDate(m.expiry)}${m.due > 0 ? `, due ${inr(m.due)}` : ''}</small></div></div>
+      <div class="actions">
+        <button class="btn primary" data-act="wa" data-id="${m.id}" data-k="welcome">${ic('chat', 18)} Send welcome on WhatsApp</button>
+        <button class="btn" data-act="qr" data-id="${m.id}">QR entry card</button>
+      </div>
+      <p class="mini">One tap opens the member's WhatsApp chat with the message already typed. Just press send.</p>`);
   },
   edit(f, id) {
     const m = getM(id), mobile = f.get('mobile').trim();
     if (db.members.some(x => x.id !== id && x.mobile === mobile)) return toast('This mobile number is already registered', true);
     const changed = m.expiry !== f.get('expiry') || m.mobile !== mobile || m.joinDate !== f.get('joinDate') || m.name !== f.get('name').trim();
-    Object.assign(m, { name: f.get('name').trim(), mobile, joinDate: f.get('joinDate'), expiry: f.get('expiry'), due: +f.get('due') || 0 });
+    Object.assign(m, { name: f.get('name').trim(), mobile, joinDate: f.get('joinDate'), expiry: f.get('expiry'), due: +f.get('due') || 0, gender: f.get('gender') || '', address: (f.get('address') || '').trim(), photo: f.get('photo') || '' });
     save(); render();
     if (changed) qrSheet(id, 'Details updated. Send the updated card if the dates or number changed.'); else { closeSheet(); toast('Changes saved'); }
   },
@@ -626,7 +770,7 @@ const handlers = {
     const ids = f.getAll('pid'), names = f.getAll('pn'), months = f.getAll('pm'), fees = f.getAll('pf');
     if (!names.length) return toast('Keep at least one plan', true);
     db.plans = names.map((n, i) => ({ id: ids[i] || 'p' + Date.now().toString(36) + i, name: n.trim(), months: +months[i], fee: +fees[i] }));
-    db.gym.name = f.get('gym').trim(); db.gym.pin = f.get('pin').trim(); db.gym.eveningFrom = +f.get('ef') || 12;
+    db.gym.name = f.get('gym').trim(); db.gym.pin = f.get('pin').trim(); db.gym.eveningFrom = +f.get('ef') || 12; db.gym.voice = f.get('voice') || 'en'; db.gym.warnDays = +f.get('warn') || 10;
     save(); closeSheet(); render(); toast('Settings saved');
   },
 };
@@ -637,7 +781,7 @@ function seedDemo() {
   names.forEach((n, i) => {
     const plan = db.plans[i % db.plans.length], join = addDays(t, -Math.floor(Math.random() * 120) - 2);
     const fee = plan.fee, due = i % 4 === 0 ? Math.round(fee * .4) : 0;
-    const m = { id: uid(), name: n, mobile: '9' + String(Math.floor(Math.random() * 1e9)).padStart(9, '0'), joinDate: join, planId: plan.id, planName: plan.name, fee, expiry: addMonths(join, plan.months), due, token: rtoken() };
+    const m = { id: uid(), gender: ['Priya', 'Neha', 'Sonia', 'Anjali', 'Pooja', 'Rekha', 'Kavita'].includes(n.split(' ')[0]) ? 'Female' : 'Male', address: ['Civil Lines', 'Station Road', 'Model Town', 'Sector 4'][i % 4], photo: '', name: n, mobile: '9' + String(Math.floor(Math.random() * 1e9)).padStart(9, '0'), joinDate: join, planId: plan.id, planName: plan.name, fee, expiry: addMonths(join, plan.months), due, token: rtoken() };
     if (i < 4) m.expiry = addDays(t, [1, 3, 6, -5][i]);
     db.members.push(m); pay(m, fee - due, ['Cash', 'UPI', 'Card'][i % 3], 'Admission', join);
   });
@@ -683,6 +827,7 @@ const actions = {
     openSheet('Owner PIN', `<form data-form="pin"><label>Enter PIN<input name="pin" type="password" inputmode="numeric" maxlength="4" required autofocus></label><button class="btn primary wide">Unlock manual entry</button></form>`);
   },
   qr: el => qrSheet(el.dataset.id),
+  pickPhoto: () => $('#photoFile').click(),
   qrSave: async el => { const f = await qrFile(getM(el.dataset.id)), a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); },
   qrShare: async el => {
     const m = getM(el.dataset.id), f = await qrFile(m);
@@ -690,6 +835,11 @@ const actions = {
     else actions.qrSave(el);
   },
   qrNew: el => { const m = getM(el.dataset.id); if (confirm(`Make a new QR for ${m.name}? The old QR will stop working.`)) { m.token = rtoken(); save(); qrSheet(m.id); toast('New QR created'); } },
+  wa: el => {
+    const m = getM(el.dataset.id); if (!m) return;
+    if (!/^\d{10}$/.test(m.mobile || '')) return toast('Is member ka mobile number sahi nahi hai', true);
+    openWA(waLink(m, el.dataset.k || 'exp'));
+  },
   att: el => {
     const m = getM(el.dataset.id), r = checkIn(m);
     toast(r.already ? `${m.name} already has a ${SESS[r.s].toLowerCase()} entry` : `${m.name} marked, ${SESS[r.s].toLowerCase()} ${r.t}`, r.already);
@@ -697,14 +847,35 @@ const actions = {
   },
   exportRep: exportReport, exportMembers, exportAtt: exportAttendance,
   settings: settingsSheet,
+  syncNow: () => { if (window.cloud && cloud.enabled) { cloud.sync(); toast('Syncing'); } else toast('Cloud sync is not set up'); },
+  logout: () => { if (confirm('Log out from this phone?')) { closeSheet(); cloud.logout(); } },
   closeSheet,
   addPlan: () => $('#plans').insertAdjacentHTML('beforeend', planRow()),
   rmPlan: el => { if (document.querySelectorAll('.planrow').length > 1) el.closest('.planrow').remove(); else toast('Keep at least one plan', true); },
+  delPay: el => {
+    const p = db.payments.find(x => x.id === el.dataset.id); if (!p) return;
+    if (!confirm(`Delete the ${inr(p.amount)} payment of ${p.name} (${fmtDate(p.date)})? The amount will be added back to their due. Dates are not changed.`)) return;
+    db.payments = db.payments.filter(x => x.id !== p.id);
+    const m = getM(p.memberId);
+    if (m) m.due = (m.due || 0) + p.amount;
+    save();
+    if (m) memberSheet(m.id); else { closeSheet(); render(); }
+    toast('Payment deleted');
+  },
+  copyRem: el => {
+    const t = today(), k = el.dataset.k;
+    let lines;
+    if (k === 'due') lines = db.members.filter(m => m.due > 0).sort((a, b) => b.due - a.due)
+      .map(m => `${m.name} - ${inr(m.due)} pending - ${m.mobile}`);
+    else lines = db.members.filter(m => { const l = daysBetween(t, m.expiry); return l >= 0 && l < warnDays(); }).sort((a, b) => a.expiry.localeCompare(b.expiry))
+      .map(m => `${m.name} - membership ends ${fmtDate(m.expiry)} - ${m.mobile}`);
+    if (!lines.length) return;
+    copyText((k === 'due' ? 'Fees pending' : 'Membership ending soon') + ` (${db.gym.name || 'Gym'})\n` + lines.join('\n'));
+  },
   backup: () => download(`gym-backup-${today()}.json`, JSON.stringify(db), 'application/json'),
   restore: () => $('#restoreFile').click(),
   demo: () => { if (!db.members.length || confirm('This replaces your current data with sample data. Continue?')) seedDemo(); },
-  reset: () => { if (confirm('Delete ALL members, payments and attendance? This cannot be undone.')) { db = { gym: db.gym, plans: db.plans, members: [], payments: [], attendance: {}, checkins: {}, seq: 1 }; save(); closeSheet(); render(); toast('All data deleted'); } },
-  install: async () => { if (!deferred) return; deferred.prompt(); await deferred.userChoice; deferred = null; $('#installBtn').hidden = true; },
+  reset: () => { if (confirm('Delete ALL members, payments and attendance' + (window.cloud && cloud.enabled ? ' on every phone' : '') + '? This cannot be undone.')) { db = { gym: db.gym, plans: db.plans, members: [], payments: [], attendance: {}, checkins: {}, seq: 1 }; save(); closeSheet(); render(); toast('All data deleted'); } },
 };
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-act]');
@@ -726,6 +897,12 @@ document.addEventListener('change', e => {
     const p = db.plans.find(x => x.id === t.value);
     $('#feeIn').value = p.fee; $('#paidIn').value = p.fee;
     if ($('#newEnd')) $('#newEnd').textContent = fmtDate(renewEnd(getM(form.dataset.id), p.id));
+  } else if (t.id === 'photoFile' && t.files[0]) {
+    photoFromFile(t.files[0]).then(url => {
+      $('#photoVal').value = url;
+      $('#photoPrev').innerHTML = `<span class="av active" style="--sz:72px;--c:var(--blue)"><img src="${url}" alt=""></span>`;
+    }).catch(() => toast('Could not read this photo', true));
+    t.value = '';
   } else if (t.id === 'attDate') { ui.attDate = t.value || today(); $('#attBody').innerHTML = attDailyList(); }
   else if (t.id === 'attMonth') { ui.attMonth = t.value || ui.attMonth; $('#attBody').innerHTML = attMonthly(); }
   else if (t.id === 'repDate') { ui.repDate = t.value || ui.repDate; render(); }
@@ -744,11 +921,5 @@ document.addEventListener('change', e => {
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeCam(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet(); });
-
-/* ---------- install + offline ---------- */
-let deferred = null;
-window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferred = e; $('#installBtn').hidden = false; });
-window.addEventListener('appinstalled', () => { deferred = null; $('#installBtn').hidden = true; });
-if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 
 render();
