@@ -837,18 +837,25 @@ const actions = {
   qr: el => qrSheet(el.dataset.id),
   pickPhoto: () => $('#photoFile').click(),
   qrSave: async el => { const f = await qrFile(getM(el.dataset.id)), a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); },
-  qrShare: async el => {
-    const m = getM(el.dataset.id), f = await qrFile(m);
-    if (navigator.canShare && navigator.canShare({ files: [f] })) {
-      try { await navigator.share({ files: [f], text: `${m.name}, this is your entry QR for ${db.gym.name}. Show it at the gate.` }); return; }
-      catch (e) { return; } // user cancelled the share sheet
-    }
-    // No file sharing on this browser/device: open the member's WhatsApp
-    // chat directly with a ready message, and download the QR so it can
-    // be attached in the chat.
+  qrShare: el => {
+    const m = getM(el.dataset.id);
     if (!/^\d{10}$/.test(m.mobile || '')) { toast('Is member ka mobile number sahi nahi hai', true); return; }
-    actions.qrSave(el);
-    openWA(waLink(m, 'welcome'));
+    const msg = `${m.name}, this is your entry QR for ${db.gym.name}. Show it at the gate.`;
+    // Probe file-share support synchronously (no await): if the phone can
+    // share files, use the system share sheet - no new tab needed.
+    let canFileShare = false;
+    try { canFileShare = !!(navigator.canShare && navigator.canShare({ files: [new File(['x'], 'x.png', { type: 'image/png' })] })); } catch (e) {}
+    if (canFileShare) {
+      qrFile(m).then(f => navigator.share({ files: [f], text: msg }).catch(() => {})).catch(() => toast('Could not make the QR image', true));
+      return;
+    }
+    // No file sharing (desktop / some browsers): open the member's WhatsApp
+    // chat RIGHT NOW inside the tap gesture. window.open after an await is
+    // no longer in the gesture and gets popup-blocked - that was the bug.
+    let w = null;
+    try { w = window.open(waLink(m, 'welcome'), '_blank', 'noopener'); } catch (e) {}
+    if (!w) window.location.href = waLink(m, 'welcome');
+    actions.qrSave(el); // QR image downloads alongside, attach it in the chat
     toast('QR downloaded. WhatsApp chat opened - attach the image and send.');
   },
   qrNew: el => { const m = getM(el.dataset.id); if (confirm(`Make a new QR for ${m.name}? The old QR will stop working.`)) { m.token = rtoken(); save(); qrSheet(m.id); toast('New QR created'); } },
