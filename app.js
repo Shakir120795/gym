@@ -1,7 +1,8 @@
-/* Gym Manager. All data is stored on this device (localStorage). */
+/* Gym Manager. Online-only: all data lives in the cloud database (Supabase).
+   Nothing is stored on this device except the login session. The app does
+   not work without internet. */
 'use strict';
 
-const KEY = 'gymmanager.v1';
 const $ = (s, r = document) => r.querySelector(s);
 
 /* ---------- data ---------- */
@@ -12,12 +13,8 @@ const DEFAULT_PLANS = [
   { id: 'p12', name: 'Yearly', months: 12, fee: 9000 },
 ];
 let db = normalize(load());
-if (normalize.fixed) { normalize.fixed = false; save(); } // keep newly made QR codes stable across reloads
 function load() {
-  try {
-    const d = JSON.parse(localStorage.getItem(KEY));
-    if (d && Array.isArray(d.members)) return d;
-  } catch (e) {}
+  // Fresh empty database. The real data is loaded from the cloud on sign-in.
   return { gym: { name: 'My Gym', phone: '' }, plans: DEFAULT_PLANS, members: [], payments: [], attendance: {}, checkins: {}, seq: 1 };
 }
 function rtoken() { const a = new Uint8Array(6); crypto.getRandomValues(a); return Array.from(a, b => b.toString(36).padStart(2, '0')).join('').slice(0, 10); }
@@ -26,11 +23,7 @@ function normalize(d) {
   d.members.forEach(m => { if (!m.token) { m.token = rtoken(); normalize.fixed = true; } });
   return d;
 }
-function persist() {
-  try { localStorage.setItem(KEY, JSON.stringify(db)); }
-  catch (e) { toast('Could not save. Phone storage may be full.', true); }
-}
-function save() { persist(); if (window.cloud) cloud.touch(); }
+function save() { if (window.cloud) cloud.touch(); } // writes go straight to the online database
 /* called after another phone's changes arrive */
 function refreshLive() {
   if (ui.tab === 'attendance' && ui.attMode === 'scan') { const c = $('#scanCount'); if (c) c.innerHTML = countsLine(); return; }
@@ -716,9 +709,9 @@ function settingsSheet() {
     <button type="button" class="btn ghost small" style="margin-top:10px" data-act="addPlan">Add plan</button>
     <button class="btn primary wide">Save settings</button></form>
     <hr><h3 style="font-size:20px;margin:0 0 8px">Backup</h3>
-    <p class="mini" style="margin:0 0 10px">Data lives on this phone or computer only. Download a backup regularly.</p>
+    <p class="mini" style="margin:0 0 10px">All data lives in your online database. Download a backup regularly to keep your own copy.</p>
     <div class="actions"><button class="btn ghost" data-act="backup">Download backup</button><button class="btn ghost" data-act="restore">Restore backup</button></div>
-    <hr><h3 style="font-size:20px;margin:0 0 8px">Cloud sync</h3>
+    <hr><h3 style="font-size:20px;margin:0 0 8px">Online database</h3>
     <p class="mini" style="margin:0 0 10px">${esc(window.cloud ? cloud.statusText() : '')}</p>
     ${window.cloud && cloud.enabled ? `<div class="actions"><button class="btn ghost" data-act="syncNow">Sync now</button><button class="btn ghost" data-act="logout">Log out</button></div>` : ''}
     <hr><div class="actions">${window.cloud && cloud.enabled ? '' : '<button class="btn ghost" data-act="demo">Load demo data</button>'}<button class="btn danger" data-act="reset">Delete all data</button></div>`);
@@ -835,6 +828,7 @@ const actions = {
     else actions.qrSave(el);
   },
   qrNew: el => { const m = getM(el.dataset.id); if (confirm(`Make a new QR for ${m.name}? The old QR will stop working.`)) { m.token = rtoken(); save(); qrSheet(m.id); toast('New QR created'); } },
+  install: async () => { if (!deferredInstall) return; deferredInstall.prompt(); await deferredInstall.userChoice; deferredInstall = null; $('#installBtn').hidden = true; },
   wa: el => {
     const m = getM(el.dataset.id); if (!m) return;
     if (!/^\d{10}$/.test(m.mobile || '')) return toast('Is member ka mobile number sahi nahi hai', true);
@@ -847,7 +841,7 @@ const actions = {
   },
   exportRep: exportReport, exportMembers, exportAtt: exportAttendance,
   settings: settingsSheet,
-  syncNow: () => { if (window.cloud && cloud.enabled) { cloud.sync(); toast('Syncing'); } else toast('Cloud sync is not set up'); },
+  syncNow: () => { if (window.cloud && cloud.enabled) { cloud.sync(); toast('Syncing'); } else toast('Online database is not set up'); },
   logout: () => { if (confirm('Log out from this phone?')) { closeSheet(); cloud.logout(); } },
   closeSheet,
   addPlan: () => $('#plans').insertAdjacentHTML('beforeend', planRow()),
@@ -922,4 +916,10 @@ document.addEventListener('change', e => {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeCam(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet(); });
 
-render();
+/* ---------- installable PWA (online-only: the service worker caches nothing) ---------- */
+let deferredInstall = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredInstall = e; const b = $('#installBtn'); if (b) b.hidden = false; });
+window.addEventListener('appinstalled', () => { deferredInstall = null; const b = $('#installBtn'); if (b) b.hidden = true; });
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+
+/* First render happens after the online database loads (cloud.js boot). */

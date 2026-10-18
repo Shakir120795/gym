@@ -1,20 +1,24 @@
-/* Cloud sync through Supabase (free plan). Local-first: the app keeps working offline
-   and sends changes as soon as the phone is online again. Every phone that signs in
-   with the owner's account sees the same members, fees and attendance. */
+/* Online-only database through Supabase (free plan). No gym data is stored on
+   this device: the browser keeps only the login session. The app does not
+   work without internet. Every phone signed in with the owner's account sees
+   the same live data. The owner controls everything from Supabase:
+   revoke access by deleting the user in Supabase > Authentication. */
 (function () {
   'use strict';
   const C = window.GYM_CLOUD || {};
   const enabled = !!(C.url && C.key);
   const root = (C.url || '').replace(/\/$/, '');
-  const AUTH = 'gymmanager.auth', META = 'gymmanager.sync', WINDOW_DAYS = 45, POLL_MS = 10000;
+  const AUTH = 'gymmanager.auth'; // login session only. Gym data is NEVER stored locally.
+  const WINDOW_DAYS = 45, POLL_MS = 10000;
   const q = s => document.querySelector(s);
   const rd = k => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } };
   const wr = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 
   let session = rd(AUTH);
-  let meta = rd(META) || { base: null, lastPull: null };
-  let state = enabled ? (session ? 'idle' : 'login') : 'off';
+  let meta = { base: {}, lastPull: null };
+  let state = 'setup';
   let running = false, rerun = false, deb = 0, lastErr = '';
+  let booted = false, starting = false;
 
   /* ---------- tiny helpers ---------- */
   function canon(o) {
@@ -27,17 +31,30 @@
   function mergeV(a, b) { const m = {}; [...a, ...b].forEach(x => { if (!m[x.s] || x.t < m[x.s].t) m[x.s] = x; }); return sortV(Object.values(m)); }
   const cutDate = () => addDays(today(), -WINDOW_DAYS);
 
+  /* ---------- overlays ---------- */
+  function showBlock(title, msg, retry) {
+    const b = q('#netblock'); if (!b) return;
+    q('#nbTitle').textContent = title;
+    q('#nbMsg').textContent = msg;
+    const r = q('#netRetry'); if (r) r.hidden = !retry;
+    b.hidden = false;
+  }
+  function hideBlock() { const b = q('#netblock'); if (b) b.hidden = true; }
+  function showLogin() { const l = q('#login'); if (l) l.hidden = false; setState('login'); }
+  function hideLogin() { const l = q('#login'); if (l) l.hidden = true; }
+
+  /* ---------- status ---------- */
   function setState(s) {
     state = s;
     const b = q('#syncBtn'); if (!b) return;
     b.hidden = !enabled;
-    b.textContent = { idle: 'Sync', syncing: 'Syncing', ok: 'Synced', offline: 'Offline', error: 'Sync error', login: 'Sign in' }[s] || '';
+    b.textContent = { loading: 'Loading', idle: 'Sync', syncing: 'Syncing', ok: 'Online', offline: 'Offline', error: 'Sync error', login: 'Sign in', setup: 'Setup' }[s] || '';
     b.className = 'sync ' + s;
   }
   function statusText() {
-    if (!enabled) return 'Cloud sync is off. Data stays on this phone only.';
+    if (!enabled) return 'Cloud database is not connected. Ask the owner to set it up.';
     const who = session && session.email ? ` as ${session.email}` : '';
-    return ({ ok: 'Synced. All your phones show the same data', syncing: 'Syncing now', offline: 'Offline. Changes will upload when internet is back', error: 'Sync problem: ' + lastErr, login: 'Not signed in', idle: 'Ready' }[state] || '') + (state === 'ok' ? who : '');
+    return ({ ok: 'Online. All your phones show the same live data', loading: 'Loading your data', syncing: 'Syncing now', offline: 'Offline. The app needs internet to work', error: 'Sync problem: ' + lastErr, login: 'Not signed in', idle: 'Ready', setup: 'Not set up' }[state] || '') + (state === 'ok' ? who : '');
   }
 
   /* ---------- auth + REST ---------- */
@@ -50,8 +67,7 @@
   }
   function requireLogin() {
     session = null; try { localStorage.removeItem(AUTH); } catch (e) {}
-    const l = q('#login'); if (l) l.hidden = false;
-    setState('login');
+    hideBlock(); showLogin();
   }
   async function ensureToken() {
     if (!session) throw new Error('auth');
@@ -153,59 +169,109 @@
   }
 
   /* ---------- the sync cycle ---------- */
+  function goOffline(msg) {
+    setState('offline');
+    showBlock('No internet', msg || 'Ye app bina internet ke nahi chalti. Connection on karke Retry dabao.', true);
+  }
   async function sync() {
-    if (!enabled || !session) return;
+    if (!enabled || !session || !booted) return;
     if (running) { rerun = true; return; }
     running = true; setState('syncing');
     try {
-      const first = !meta.base; if (first) meta.base = {};
       const rows = await pull();
       const snap0 = snapshot(), d0 = diff(snap0), dirtyKeys = new Set(d0.dirty.map(r => r.k)), delKeys = new Set(d0.del);
-      const changed = applyRemote(rows, snap0, dirtyKeys, delKeys, first);
-      if (changed) { normalize(db); persist(); }
+      const changed = applyRemote(rows, snap0, dirtyKeys, delKeys, false);
+      if (changed) { normalize(db); }
       const snap = snapshot(), { dirty, del } = diff(snap);
       await pushAll(dirty, del);
       let mx = meta.lastPull ? new Date(meta.lastPull).getTime() : 0;
       rows.forEach(r => { const t = new Date(r.updated_at).getTime(); if (t > mx) mx = t; });
       if (mx) meta.lastPull = new Date(mx).toISOString();
-      wr(META, meta);
-      setState('ok');
+      setState('ok'); hideBlock();
       if (changed && window.refreshLive) refreshLive();
     } catch (e) {
       if (e.message === 'auth') { /* login screen already shown */ }
-      else if ((e && e.name === 'TypeError') || !navigator.onLine) setState('offline');
+      else if ((e && e.name === 'TypeError') || !navigator.onLine) goOffline();
       else { lastErr = e.message || 'unknown'; setState('error'); }
     } finally {
       running = false;
       if (rerun) { rerun = false; setTimeout(sync, 300); }
     }
   }
-  function touch() { if (!enabled || !session) return; clearTimeout(deb); deb = setTimeout(sync, 1500); }
+  function touch() { if (!enabled || !session || !booted) return; clearTimeout(deb); deb = setTimeout(sync, 700); }
 
   async function logout() {
     session = null; try { localStorage.removeItem(AUTH); } catch (e) {}
-    requireLogin();
+    booted = false; requireLogin();
   }
+
+  /* ---------- boot ---------- */
+  async function checkNet() {
+    if (!navigator.onLine) return 'offline';
+    try { await api('GET', '/rest/v1/records?select=id&limit=1'); return 'ok'; }
+    catch (e) {
+      if (e.message === 'auth') return 'auth';
+      if (e && (e.name === 'TypeError' || !navigator.onLine)) return 'offline';
+      return 'error:' + (e.message || 'unknown');
+    }
+  }
+  async function fullPull() {
+    meta = { base: {}, lastPull: null };
+    const rows = await pull();
+    const cut = cutDate();
+    const fresh = rows.filter(r => r.kind !== 'chk' || !r.data || !r.data.date || r.data.date >= cut);
+    applyRemote(fresh, snapshot(), new Set(), new Set(), true);
+    normalize(db);
+    const s = snapshot();
+    for (const k in s) meta.base[k] = hash(canon(s[k].data));
+    meta.lastPull = new Date().toISOString();
+  }
+  async function start() {
+    if (starting) return;
+    starting = true;
+    try {
+      hideLogin(); hideBlock(); setState('loading');
+      const net = await checkNet();
+      if (net === 'auth') { requireLogin(); return; }
+      if (net === 'offline') { goOffline(); return; }
+      if (net.startsWith('error')) { setState('error'); lastErr = net.slice(6); showBlock('Connection failed', 'Database se connect nahi ho paya: ' + lastErr, true); return; }
+      try { await fullPull(); }
+      catch (e) {
+        if (e.message === 'auth') { requireLogin(); return; }
+        goOffline(); return;
+      }
+      booted = true; setState('ok'); render();
+    } finally { starting = false; }
+  }
+  function retry() { if (booted) sync(); else start(); }
 
   /* ---------- start ---------- */
   function init() {
     setState(state);
-    if (!enabled) return;
+    if (!enabled) {
+      setState('setup');
+      showBlock('Setup required', 'Cloud database abhi connect nahi hai. Owner se config.js mein Supabase details dalwao. Bina iske app nahi chalegi.', false);
+      return;
+    }
     const form = q('#loginForm');
     if (form) form.addEventListener('submit', async e => {
       e.preventDefault();
       const msg = q('#loginMsg'), f = new FormData(form); msg.textContent = 'Signing in...';
       try {
         await authReq('password', { email: f.get('email').trim(), password: f.get('password') });
-        form.reset(); msg.textContent = ''; q('#login').hidden = true; setState('idle'); sync();
+        form.reset(); msg.textContent = ''; start();
       } catch (err) { msg.textContent = (err && err.name === 'TypeError') ? 'No internet. Connect and try again.' : (err.status === 400 ? 'Wrong email or password.' : err.message); }
     });
-    if (!session) { q('#login').hidden = false; setState('login'); } else sync();
-    setInterval(() => { if (!document.hidden && session) sync(); }, POLL_MS);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden && session) sync(); });
-    window.addEventListener('online', () => { if (session) sync(); });
+    const rb = q('#netRetry');
+    if (rb) rb.addEventListener('click', retry);
+    window.addEventListener('online', () => { if (!session) return; if (!booted) start(); else sync(); });
+    window.addEventListener('offline', () => { if (session) goOffline('Connection chali gayi hai. Wapas aane ka wait karo ya Retry dabao.'); });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && session && booted) sync(); });
+    window.addEventListener('pagehide', () => { if (session && booted && !running) { clearTimeout(deb); sync(); } });
+    setInterval(() => { if (!document.hidden && session && booted) sync(); }, POLL_MS);
+    if (!session) showLogin(); else start();
   }
 
-  window.cloud = { enabled, sync, touch, logout, statusText, init, get state() { return state; } };
+  window.cloud = { enabled, sync, touch, logout, statusText, retry, init, get state() { return state; }, get booted() { return booted; } };
   init();
 })();
