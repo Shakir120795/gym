@@ -1,0 +1,62 @@
+# Daily DB backup — ALL gyms, one file, emailed to you.
+#
+# SETUP (one time, ~5 min):
+#   1. Repo page -> Settings -> Secrets and variables -> Actions -> New repository secret.
+#      Add these 3 secrets (values only you see; they stay encrypted in GitHub):
+#        DB_PASSWORD        - Supabase database password (Settings -> Database in Supabase)
+#        EMAIL_USER         - your Gmail address (e.g. sales.shfashion@gmail.com)
+#        EMAIL_APP_PASSWORD - Google "App password": myaccount.google.com -> Security ->
+#                             2-Step Verification ON -> App passwords -> create one for "Mail"
+#   2. Done. Every night at 00:00 IST a full backup (every gym_id) is dumped and emailed.
+#      Manual run any time: Actions tab -> "Daily DB backup" -> Run workflow.
+#
+# No third-party actions used — only Ubuntu + pg_dump + Python stdlib.
+# The DB password never appears in logs or the repo.
+
+name: Daily DB backup
+
+on:
+  schedule:
+    - cron: '30 18 * * *' # 00:00 IST
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install pg_dump
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Dump database (all gyms)
+        env:
+          PGPASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          set -o pipefail
+          pg_dump --schema=public \
+            -h db.usalkhzjtnkvqdusrauf.supabase.co -U postgres postgres \
+            | gzip > "gym-backup-$(date +%F).sql.gz"
+          SZ=$(stat -c%s gym-backup-*.sql.gz)
+          echo "backup size: $SZ bytes"
+          [ "$SZ" -gt 1000 ] || { echo "backup too small, failing"; exit 1; }
+
+      - name: Email backup
+        env:
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+        run: |
+          python3 - <<'PYEOF'
+          import smtplib, os, glob
+          from email.message import EmailMessage
+          f = sorted(glob.glob('gym-backup-*.sql.gz'))[-1]
+          msg = EmailMessage()
+          msg['Subject'] = 'Gym DB backup ' + f.replace('gym-backup-', '').replace('.sql.gz', '')
+          msg['From'] = os.environ['EMAIL_USER']
+          msg['To'] = os.environ['EMAIL_USER']
+          msg.set_content('All-gyms database backup attached. (automated daily backup)')
+          with open(f, 'rb') as fh:
+              msg.add_attachment(fh.read(), maintype='application', subtype='gzip', filename=f)
+          s = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+          s.login(os.environ['EMAIL_USER'], os.environ['EMAIL_APP_PASSWORD'])
+          s.send_message(msg)
+          print('emailed', f)
+          PYEOF
