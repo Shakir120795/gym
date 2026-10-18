@@ -319,7 +319,7 @@ function viewAttendance() {
   const M = [['scan', 'Scan entry'], ['today', 'Who came'], ['monthly', 'Monthly']];
   const seg = `<div class="seg">${M.map(([k, l]) => `<button class="${ui.attMode === k ? 'on' : ''}" data-act="attMode" data-k="${k}">${l}</button>`).join('')}</div>`;
   if (ui.attMode === 'monthly') return seg + `<div id="attBody">${attMonthly()}</div>`;
-  if (ui.attMode === 'today') return seg + `<div class="bar"><input type="date" id="attDate" value="${ui.attDate}" max="${today()}"></div><div id="attBody">${attDailyList()}</div>`;
+  if (ui.attMode === 'today') return seg + `<div class="bar"><input type="date" id="attDate" value="${ui.attDate}" max="${today()}"><button class="btn ghost small" data-act="exportAttDay">Export Excel</button></div><div id="attBody">${attDailyList()}</div>`;
   return seg + `<div class="scanbox"><video id="cam" playsinline muted></video><canvas id="camc" hidden></canvas><div class="frame"></div><div id="scanMsg" class="scanmsg">Camera is off</div></div>
     <div id="scanRes"></div>
     <button class="btn primary wide" style="margin-top:0" data-act="camToggle" id="camBtn">Start camera</button>
@@ -560,7 +560,7 @@ function viewReports() {
   <h2>New admissions</h2>${simple(r.admissions, m => `<div class="row"><span class="who"><b>${esc(m.name)}</b><small>${esc(m.planName)}, joined ${fmtDate(m.joinDate)}</small></span></div>`)}
   <h2>Expired members</h2>${simple(r.expired, m => `<div class="row"><span class="who"><b>${esc(m.name)}</b><small>Ended ${fmtDate(m.expiry)}</small></span></div>`)}
   <h2>Pending payments</h2>${simple(r.pending, m => `<div class="row"><span class="who"><b>${esc(m.name)}</b><small>${esc(m.mobile)}</small></span><span class="amt due">${inr(m.due)}</span></div>`)}
-  <hr><button class="btn ghost wide" data-act="exportMembers">Export all members to Excel</button>`;
+  <hr><div class="actions"><button class="btn ghost" data-act="exportMembers">All members</button><button class="btn ghost" data-act="exportPending">Pending fees</button></div>`;
 }
 function exportReport() {
   const r = reportData(), rows = [];
@@ -575,6 +575,24 @@ function exportReport() {
   rows.push([], ['PENDING PAYMENTS'], ['Member', 'Mobile', 'Due amount', 'Membership ends']);
   r.pending.forEach(m => rows.push([m.name, txt(m.mobile), m.due, m.expiry]));
   download(`gym-report-${r.key}.csv`, csv(rows));
+}
+function exportPending() {
+  const rows = [['Member', 'Mobile', 'Due amount', 'Plan', 'Membership ends']];
+  db.members.filter(m => (m.due || 0) > 0).sort((a, b) => (b.due || 0) - (a.due || 0) || a.name.localeCompare(b.name))
+    .forEach(m => rows.push([m.name, txt(m.mobile), m.due, m.planName, m.expiry]));
+  rows.push([], ['Total due', sum(db.members.filter(m => (m.due || 0) > 0).map(m => ({ amount: m.due })))]);
+  download(`gym-pending-fees-${today()}.csv`, csv(rows));
+}
+function exportAttDay() {
+  const d = ui.attDate, day = db.checkins[d] || {};
+  const ids = [...new Set([...(db.attendance[d] || []), ...Object.keys(day)])].filter(getM).map(getM).sort((a, b) => a.name.localeCompare(b.name));
+  const rows = [[`Attendance ${fmtDate(d)}`], ['Member', 'Mobile', 'Morning', 'Evening']];
+  ids.forEach(m => {
+    const v = day[m.id] || [], t = s => (v.find(x => x.s === s) || {}).t || '';
+    rows.push([m.name, txt(m.mobile), t('M'), t('E')]);
+  });
+  rows.push([], ['Total members', ids.length]);
+  download(`gym-attendance-${d}.csv`, csv(rows));
 }
 function exportMembers() {
   const rows = [['Name', 'Mobile', 'Gender', 'Address', 'Joining date', 'Plan', 'Plan fee', 'Membership ends', 'Status', 'Fees due']];
@@ -710,7 +728,7 @@ function settingsSheet() {
     <button class="btn primary wide">Save settings</button></form>
     <hr><h3 style="font-size:20px;margin:0 0 8px">Online database</h3>
     <p class="mini" style="margin:0 0 10px">${esc(window.cloud ? cloud.statusText() : '')}</p>
-    ${window.cloud && cloud.enabled ? `<div class="actions"><button class="btn ghost" data-act="syncNow">Sync now</button><button class="btn ghost" data-act="logout">Log out</button></div>` : ''}
+    ${window.cloud && cloud.enabled ? `<div class="actions"><button class="btn ghost" data-act="logout">Log out</button></div>` : ''}
     <hr><div class="actions">${window.cloud && cloud.enabled ? '' : '<button class="btn ghost" data-act="demo">Load demo data</button>'}<button class="btn danger" data-act="reset">Delete all data</button></div>`);
 }
 
@@ -845,9 +863,8 @@ const actions = {
     toast(r.already ? `${m.name} already has a ${SESS[r.s].toLowerCase()} entry` : `${m.name} marked, ${SESS[r.s].toLowerCase()} ${r.t}`, r.already);
     $('#attBody').innerHTML = attDailyList();
   },
-  exportRep: exportReport, exportMembers, exportAtt: exportAttendance,
+  exportRep: exportReport, exportMembers, exportPending, exportAtt: exportAttendance, exportAttDay,
   settings: settingsSheet,
-  syncNow: () => { if (window.cloud && cloud.enabled) { cloud.sync(); toast('Syncing'); } else toast('Online database is not set up'); },
   logout: () => { if (confirm('Log out from this phone?')) { closeSheet(); cloud.logout(); } },
   closeSheet,
   addPlan: () => $('#plans').insertAdjacentHTML('beforeend', planRow()),
