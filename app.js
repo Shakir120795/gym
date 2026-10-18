@@ -447,9 +447,17 @@ function onScan(data) {
 }
 
 /* ---------- QR card ---------- */
-function qrCardUrl(m) {
+function loadImg(src) { return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; }); }
+function drawCover(x, img, dx, dy, dw, dh) {
+  const ir = img.naturalWidth / img.naturalHeight, r = dw / dh;
+  let sw, sh, sx, sy;
+  if (ir > r) { sh = img.naturalHeight; sw = sh * r; sx = (img.naturalWidth - sw) / 2; sy = 0; }
+  else { sw = img.naturalWidth; sh = sw / r; sx = 0; sy = (img.naturalHeight - sh) / 2; }
+  x.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+}
+async function qrCardUrl(m) {
   const qr = qrcode(0, 'M'); qr.addData(qrPayload(m)); qr.make();
-  const n = qr.getModuleCount(), cell = Math.floor(400 / (n + 8)), size = cell * (n + 8);
+  const n = qr.getModuleCount(), cell = Math.floor(360 / (n + 8)), size = cell * (n + 8);
   const W = 640, H = 1000, c = document.createElement('canvas'); c.width = W; c.height = H;
   const x = c.getContext('2d');
   const F = "'Barlow Condensed','Arial Narrow',sans-serif", B = "'Barlow',Arial,sans-serif";
@@ -495,8 +503,23 @@ function qrCardUrl(m) {
   x.strokeStyle = gold; x.lineWidth = 3; x.stroke();
   x.fillStyle = '#101114';
   for (let r = 0; r < n; r++) for (let k = 0; k < n; k++) if (qr.isDark(r, k)) x.fillRect(ox + (k + 4) * cell, oy + (r + 4) * cell, cell, cell);
+  // member photo in gold ring (or gold initial when no photo)
+  let photo = null;
+  if (m.photo) { try { photo = await loadImg(m.photo); } catch (e) {} }
+  const pcy = py + ps + 54, phr = 42;
+  x.save();
+  x.beginPath(); x.arc(W / 2, pcy, phr, 0, Math.PI * 2); x.clip();
+  if (photo) drawCover(x, photo, W / 2 - phr, pcy - phr, phr * 2, phr * 2);
+  else { x.fillStyle = '#1B1E23'; x.fillRect(W / 2 - phr, pcy - phr, phr * 2, phr * 2); }
+  x.restore();
+  x.strokeStyle = gold; x.lineWidth = 4;
+  x.beginPath(); x.arc(W / 2, pcy, phr, 0, Math.PI * 2); x.stroke();
+  if (!photo) {
+    x.fillStyle = '#E8B84B'; x.font = `700 46px ${F}`;
+    x.fillText((m.name || '?').trim().charAt(0).toUpperCase(), W / 2, pcy + 17);
+  }
   // member name + mobile
-  const by = oy + size + 92;
+  const by = pcy + phr + 58;
   x.fillStyle = '#ffffff'; x.font = `700 58px ${F}`;
   x.fillText(m.name.slice(0, 26), W / 2, by);
   x.fillStyle = '#E8B84B'; x.font = `600 32px ${B}`;
@@ -518,12 +541,13 @@ function qrCardUrl(m) {
   return c.toDataURL('image/png');
 }
 async function qrFile(m) {
-  const blob = await (await fetch(qrCardUrl(m))).blob();
+  const blob = await (await fetch(await qrCardUrl(m))).blob();
   return new File([blob], `${m.name.replace(/\W+/g, '-')}-gym-qr.png`, { type: 'image/png' });
 }
-function qrSheet(id, note) {
+async function qrSheet(id, note) {
   const m = getM(id); save();
-  openSheet('QR entry card', `${note ? `<p style="margin:0 0 10px;font-weight:600">${esc(note)}</p>` : ''}<img class="qrimg" src="${qrCardUrl(m)}" alt="QR card for ${esc(m.name)}">
+  const url = await qrCardUrl(m);
+  openSheet('QR entry card', `${note ? `<p style="margin:0 0 10px;font-weight:600">${esc(note)}</p>` : ''}<img class="qrimg" src="${url}" alt="QR card for ${esc(m.name)}">
     <div class="actions"><button class="btn primary" data-act="qrShare" data-id="${id}">Send on WhatsApp</button><button class="btn ghost" data-act="qrSave" data-id="${id}">Download image</button></div>
     <p class="mini">The QR stays the same after renewal. Only the dates on the card change, so send the updated card after a renewal. Entry always follows the dates saved in the app.</p>
     <button class="btn danger small" style="margin-top:12px" data-act="qrNew" data-id="${id}">Make a new QR (old one stops working)</button>`);
@@ -676,8 +700,8 @@ const planOptions = sel => db.plans.map(p => `<option value="${p.id}" ${p.id ===
 
 function photoField(m) {
   return `<div class="photo"><span id="photoPrev">${m ? avatar(m, 72) : '<span class="av none" style="--sz:72px"><span>+</span></span>'}</span>
-    <div><button type="button" class="btn ghost small" data-act="pickPhoto">${m && m.photo ? 'Change photo' : 'Add photo'}</button><div class="mini" style="margin-top:4px">Camera or gallery</div></div>
-    <input type="file" id="photoFile" accept="image/*" hidden><input type="hidden" name="photo" id="photoVal" value="${m ? m.photo || '' : ''}"></div>`;
+    <div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn ghost small" data-act="pickCam">Camera</button><button type="button" class="btn ghost small" data-act="pickPhoto">Gallery</button></div><div class="mini" style="margin-top:4px">${m && m.photo ? 'Photo added' : 'Add member photo'}</div></div>
+    <input type="file" id="photoFile" accept="image/*" hidden><input type="file" id="photoCam" accept="image/*" capture="environment" hidden><input type="hidden" name="photo" id="photoVal" value="${m ? m.photo || '' : ''}"></div>`;
 }
 function genderAddress(m, req) {
   const g = (m && m.gender) || '';
@@ -894,6 +918,7 @@ const actions = {
   },
   qr: el => qrSheet(el.dataset.id),
   pickPhoto: () => $('#photoFile').click(),
+  pickCam: () => $('#photoCam').click(),
   qrSave: async el => { const f = await qrFile(getM(el.dataset.id)), a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); },
   qrShare: el => {
     // Works exactly like the other WhatsApp buttons: the member's chat opens
@@ -966,7 +991,7 @@ document.addEventListener('change', e => {
     const p = db.plans.find(x => x.id === t.value);
     $('#feeIn').value = p.fee; $('#paidIn').value = p.fee;
     if ($('#newEnd')) $('#newEnd').textContent = fmtDate(renewEnd(getM(form.dataset.id), p.id));
-  } else if (t.id === 'photoFile' && t.files[0]) {
+  } else if ((t.id === 'photoFile' || t.id === 'photoCam') && t.files[0]) {
     photoFromFile(t.files[0]).then(url => {
       $('#photoVal').value = url;
       $('#photoPrev').innerHTML = `<span class="av active" style="--sz:72px;--c:var(--blue)"><img src="${url}" alt=""></span>`;
