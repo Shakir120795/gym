@@ -503,35 +503,39 @@ async function qrCardUrl(m) {
   x.strokeStyle = gold; x.lineWidth = 3; x.stroke();
   x.fillStyle = '#101114';
   for (let r = 0; r < n; r++) for (let k = 0; k < n; k++) if (qr.isDark(r, k)) x.fillRect(ox + (k + 4) * cell, oy + (r + 4) * cell, cell, cell);
-  // member photo in gold ring (or gold initial when no photo)
+  // member row: photo left, name + mobile right
   let photo = null;
   if (m.photo) { try { photo = await loadImg(m.photo); } catch (e) {} }
-  const pcy = py + ps + 54, phr = 42;
+  const rowY = py + ps + 96, phr = 54, phx = 200, tx = phx + phr + 28;
   x.save();
-  x.beginPath(); x.arc(W / 2, pcy, phr, 0, Math.PI * 2); x.clip();
-  if (photo) drawCover(x, photo, W / 2 - phr, pcy - phr, phr * 2, phr * 2);
-  else { x.fillStyle = '#1B1E23'; x.fillRect(W / 2 - phr, pcy - phr, phr * 2, phr * 2); }
+  x.beginPath(); x.arc(phx, rowY, phr, 0, Math.PI * 2); x.clip();
+  if (photo) drawCover(x, photo, phx - phr, rowY - phr, phr * 2, phr * 2);
+  else { x.fillStyle = '#1B1E23'; x.fillRect(phx - phr, rowY - phr, phr * 2, phr * 2); }
   x.restore();
   x.strokeStyle = gold; x.lineWidth = 4;
-  x.beginPath(); x.arc(W / 2, pcy, phr, 0, Math.PI * 2); x.stroke();
+  x.beginPath(); x.arc(phx, rowY, phr, 0, Math.PI * 2); x.stroke();
   if (!photo) {
-    x.fillStyle = '#E8B84B'; x.font = `700 46px ${F}`;
-    x.fillText((m.name || '?').trim().charAt(0).toUpperCase(), W / 2, pcy + 17);
+    x.fillStyle = '#E8B84B'; x.font = `700 52px ${F}`; x.textAlign = 'center';
+    x.fillText((m.name || '?').trim().charAt(0).toUpperCase(), phx, rowY + 19);
   }
-  // member name + mobile
-  const by = pcy + phr + 58;
-  x.fillStyle = '#ffffff'; x.font = `700 58px ${F}`;
-  x.fillText(m.name.slice(0, 26), W / 2, by);
-  x.fillStyle = '#E8B84B'; x.font = `600 32px ${B}`;
-  x.fillText(m.mobile, W / 2, by + 50);
+  // name (shrinks to fit) + mobile, left-aligned next to photo
+  x.textAlign = 'left';
+  let nfz = 54;
+  x.fillStyle = '#ffffff';
+  do { x.font = `700 ${nfz}px ${F}`; nfz -= 2; } while (x.measureText(m.name.slice(0, 26)).width > 300 && nfz > 24);
+  x.fillText(m.name.slice(0, 26), tx, rowY - 6);
+  x.fillStyle = '#E8B84B'; x.font = `600 30px ${B}`;
+  x.fillText(m.mobile, tx, rowY + 44);
+  x.textAlign = 'center';
   // info strip
+  const by = rowY + 100;
   x.strokeStyle = 'rgba(232,184,75,0.35)'; x.lineWidth = 1;
-  x.beginPath(); x.moveTo(70, by + 82); x.lineTo(W - 70, by + 82); x.stroke();
+  x.beginPath(); x.moveTo(70, by); x.lineTo(W - 70, by); x.stroke();
   [['Plan', m.planName, 130], ['Joined', fmtDate(m.joinDate), W / 2], ['Valid till', fmtDate(m.expiry), W - 130]].forEach(([l, v, cx]) => {
-    x.fillStyle = '#8E96A0'; x.font = `500 22px ${B}`; x.fillText(l, cx, by + 120);
+    x.fillStyle = '#8E96A0'; x.font = `500 22px ${B}`; x.fillText(l, cx, by + 38);
     let fz = 36; x.fillStyle = '#F5D67B';
     do { x.font = `700 ${fz}px ${F}`; fz -= 2; } while (x.measureText(String(v)).width > 180 && fz > 14);
-    x.fillText(String(v), cx, by + 160);
+    x.fillText(String(v), cx, by + 76);
   });
   // footer
   x.fillStyle = '#8E96A0'; x.font = `500 22px ${B}`;
