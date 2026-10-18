@@ -32,8 +32,12 @@ jobs:
           PGPASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
           set -o pipefail
+          # GitHub runners cannot reach IPv6 — resolve the DB host to IPv4 first
+          DBIP=$(getent ahostsv4 db.usalkhzjtnkvqdusrauf.supabase.co | awk '{print $1; exit}')
+          echo "DB IPv4: $DBIP"
+          [ -n "$DBIP" ] || { echo "could not resolve IPv4"; exit 1; }
           pg_dump --schema=public \
-            -h db.usalkhzjtnkvqdusrauf.supabase.co -U postgres postgres \
+            -h "$DBIP" -U postgres postgres \
             | gzip > "gym-backup-$(date +%F).sql.gz"
           SZ=$(stat -c%s gym-backup-*.sql.gz)
           echo "backup size: $SZ bytes"
