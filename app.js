@@ -838,24 +838,13 @@ const actions = {
   pickPhoto: () => $('#photoFile').click(),
   qrSave: async el => { const f = await qrFile(getM(el.dataset.id)), a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); },
   qrShare: el => {
+    // Works exactly like the other WhatsApp buttons: the member's chat opens
+    // directly (synchronously inside the tap, so no popup block), and the QR
+    // image downloads alongside so it can be attached in the chat.
     const m = getM(el.dataset.id);
     if (!/^\d{10}$/.test(m.mobile || '')) { toast('Is member ka mobile number sahi nahi hai', true); return; }
-    const msg = `${m.name}, this is your entry QR for ${db.gym.name}. Show it at the gate.`;
-    // Probe file-share support synchronously (no await): if the phone can
-    // share files, use the system share sheet - no new tab needed.
-    let canFileShare = false;
-    try { canFileShare = !!(navigator.canShare && navigator.canShare({ files: [new File(['x'], 'x.png', { type: 'image/png' })] })); } catch (e) {}
-    if (canFileShare) {
-      qrFile(m).then(f => navigator.share({ files: [f], text: msg }).catch(() => {})).catch(() => toast('Could not make the QR image', true));
-      return;
-    }
-    // No file sharing (desktop / some browsers): open the member's WhatsApp
-    // chat RIGHT NOW inside the tap gesture. window.open after an await is
-    // no longer in the gesture and gets popup-blocked - that was the bug.
-    let w = null;
-    try { w = window.open(waLink(m, 'welcome'), '_blank', 'noopener'); } catch (e) {}
-    if (!w) window.location.href = waLink(m, 'welcome');
-    actions.qrSave(el); // QR image downloads alongside, attach it in the chat
+    openWA(waLink(m, 'welcome'));
+    actions.qrSave(el);
     toast('QR downloaded. WhatsApp chat opened - attach the image and send.');
   },
   qrNew: el => { const m = getM(el.dataset.id); if (confirm(`Make a new QR for ${m.name}? The old QR will stop working.`)) { m.token = rtoken(); save(); qrSheet(m.id); toast('New QR created'); } },
