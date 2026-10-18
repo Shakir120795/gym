@@ -708,9 +708,6 @@ function settingsSheet() {
     <div id="plans">${db.plans.map(planRow).join('')}</div>
     <button type="button" class="btn ghost small" style="margin-top:10px" data-act="addPlan">Add plan</button>
     <button class="btn primary wide">Save settings</button></form>
-    <hr><h3 style="font-size:20px;margin:0 0 8px">Backup</h3>
-    <p class="mini" style="margin:0 0 10px">All data lives in your online database. Download a backup regularly to keep your own copy.</p>
-    <div class="actions"><button class="btn ghost" data-act="backup">Download backup</button><button class="btn ghost" data-act="restore">Restore backup</button></div>
     <hr><h3 style="font-size:20px;margin:0 0 8px">Online database</h3>
     <p class="mini" style="margin:0 0 10px">${esc(window.cloud ? cloud.statusText() : '')}</p>
     ${window.cloud && cloud.enabled ? `<div class="actions"><button class="btn ghost" data-act="syncNow">Sync now</button><button class="btn ghost" data-act="logout">Log out</button></div>` : ''}
@@ -824,8 +821,17 @@ const actions = {
   qrSave: async el => { const f = await qrFile(getM(el.dataset.id)), a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); },
   qrShare: async el => {
     const m = getM(el.dataset.id), f = await qrFile(m);
-    if (navigator.canShare && navigator.canShare({ files: [f] })) navigator.share({ files: [f], text: `${m.name}, this is your entry QR for ${db.gym.name}. Show it at the gate.` }).catch(() => {});
-    else actions.qrSave(el);
+    if (navigator.canShare && navigator.canShare({ files: [f] })) {
+      try { await navigator.share({ files: [f], text: `${m.name}, this is your entry QR for ${db.gym.name}. Show it at the gate.` }); return; }
+      catch (e) { return; } // user cancelled the share sheet
+    }
+    // No file sharing on this browser/device: open the member's WhatsApp
+    // chat directly with a ready message, and download the QR so it can
+    // be attached in the chat.
+    if (!/^\d{10}$/.test(m.mobile || '')) { toast('Is member ka mobile number sahi nahi hai', true); return; }
+    actions.qrSave(el);
+    openWA(waLink(m, 'welcome'));
+    toast('QR downloaded. WhatsApp chat opened - attach the image and send.');
   },
   qrNew: el => { const m = getM(el.dataset.id); if (confirm(`Make a new QR for ${m.name}? The old QR will stop working.`)) { m.token = rtoken(); save(); qrSheet(m.id); toast('New QR created'); } },
   install: async () => { if (!deferredInstall) return; deferredInstall.prompt(); await deferredInstall.userChoice; deferredInstall = null; $('#installBtn').hidden = true; },
@@ -866,8 +872,6 @@ const actions = {
     if (!lines.length) return;
     copyText((k === 'due' ? 'Fees pending' : 'Membership ending soon') + ` (${db.gym.name || 'Gym'})\n` + lines.join('\n'));
   },
-  backup: () => download(`gym-backup-${today()}.json`, JSON.stringify(db), 'application/json'),
-  restore: () => $('#restoreFile').click(),
   demo: () => { if (!db.members.length || confirm('This replaces your current data with sample data. Continue?')) seedDemo(); },
   reset: () => { if (confirm('Delete ALL members, payments and attendance' + (window.cloud && cloud.enabled ? ' on every phone' : '') + '? This cannot be undone.')) { db = { gym: db.gym, plans: db.plans, members: [], payments: [], attendance: {}, checkins: {}, seq: 1 }; save(); closeSheet(); render(); toast('All data deleted'); } },
 };
@@ -901,17 +905,6 @@ document.addEventListener('change', e => {
   else if (t.id === 'attMonth') { ui.attMonth = t.value || ui.attMonth; $('#attBody').innerHTML = attMonthly(); }
   else if (t.id === 'repDate') { ui.repDate = t.value || ui.repDate; render(); }
   else if (t.id === 'repMonth') { ui.repMonth = t.value || ui.repMonth; render(); }
-  else if (t.id === 'restoreFile' && t.files[0]) {
-    const rd = new FileReader();
-    rd.onload = () => {
-      try {
-        const d = JSON.parse(rd.result);
-        if (!Array.isArray(d.members) || !Array.isArray(d.payments)) throw 0;
-        db = normalize(d); save(); closeSheet(); render(); toast('Backup restored');
-      } catch (_) { toast('This file is not a valid backup', true); }
-    };
-    rd.readAsText(t.files[0]); t.value = '';
-  }
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeCam(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet(); });
