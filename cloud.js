@@ -1,8 +1,11 @@
 /* Online-only database through Supabase (free plan). No gym data is stored on
    this device: the browser keeps only the login session. The app does not
-   work without internet. Every phone signed in with the owner's account sees
-   the same live data. The owner controls everything from Supabase:
-   revoke access by deleting the user in Supabase > Authentication. */
+   work without internet. Every phone signed in with the same gym's account
+   sees the same live data. Multi-gym ready: each login belongs to one gym
+   (gym_id in the user's metadata), the database (RLS) enforces that a login
+   can only read/write its own gym's rows, and QR cards carry the gym id so a
+   card from one gym never works at another. The owner controls everything
+   from Supabase: revoke access by deleting the user in Authentication. */
 (function () {
   'use strict';
   const C = window.GYM_CLOUD || {};
@@ -62,9 +65,10 @@
     const r = await fetch(`${root}/auth/v1/token?grant_type=${grant}`, { method: 'POST', headers: { apikey: C.key, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw Object.assign(new Error(j.error_description || j.msg || j.message || 'Sign in failed'), { status: r.status });
-    session = { access: j.access_token, refresh: j.refresh_token, exp: Date.now() + (j.expires_in || 3600) * 1000, email: (j.user && j.user.email) || body.email || '' };
+    session = { access: j.access_token, refresh: j.refresh_token, exp: Date.now() + (j.expires_in || 3600) * 1000, email: (j.user && j.user.email) || body.email || '', gymId: (j.user && j.user.user_metadata && j.user.user_metadata.gym_id) || 'gym-main' };
     wr(AUTH, session);
   }
+  function gymId() { return (session && session.gymId) || 'gym-main'; }
   function requireLogin() {
     session = null; try { localStorage.removeItem(AUTH); } catch (e) {}
     hideBlock(); showLogin();
@@ -113,7 +117,7 @@
     const since = meta.lastPull ? new Date(new Date(meta.lastPull).getTime() - 2000).toISOString() : null;
     let all = [], off = 0;
     for (;;) {
-      let p = `/rest/v1/records?select=kind,id,data,deleted,updated_at&order=updated_at.asc,kind.asc,id.asc&limit=1000&offset=${off}`;
+      let p = `/rest/v1/records?select=kind,id,data,deleted,updated_at&gym_id=eq.${encodeURIComponent(gymId())}&order=updated_at.asc,kind.asc,id.asc&limit=1000&offset=${off}`;
       if (since) p += `&updated_at=gte.${encodeURIComponent(since)}`;
       const rows = await api('GET', p);
       all = all.concat(rows || []);
@@ -159,10 +163,11 @@
 
   /* ---------- push ---------- */
   async function pushAll(dirty, del) {
-    const rows = dirty.map(r => ({ kind: r.kind, id: r.id, data: r.data, deleted: false }))
-      .concat(del.map(k => { const i = k.indexOf('|'); return { kind: k.slice(0, i), id: k.slice(i + 1), data: null, deleted: true }; }));
+    const gid = gymId();
+    const rows = dirty.map(r => ({ kind: r.kind, id: r.id, gym_id: gid, data: r.data, deleted: false }))
+      .concat(del.map(k => { const i = k.indexOf('|'); return { kind: k.slice(0, i), id: k.slice(i + 1), gym_id: gid, data: null, deleted: true }; }));
     for (let i = 0; i < rows.length; i += 200) {
-      await api('POST', '/rest/v1/records?on_conflict=kind,id', rows.slice(i, i + 200), { Prefer: 'resolution=merge-duplicates,return=minimal' });
+      await api('POST', '/rest/v1/records?on_conflict=gym_id,kind,id', rows.slice(i, i + 200), { Prefer: 'resolution=merge-duplicates,return=minimal' });
     }
     dirty.forEach(r => { meta.base[r.k] = r.h; });
     del.forEach(k => { delete meta.base[k]; });
@@ -208,7 +213,7 @@
   /* ---------- boot ---------- */
   async function checkNet() {
     if (!navigator.onLine) return 'offline';
-    try { await api('GET', '/rest/v1/records?select=id&limit=1'); return 'ok'; }
+    try { await api('GET', `/rest/v1/records?select=id&gym_id=eq.${encodeURIComponent(gymId())}&limit=1`); return 'ok'; }
     catch (e) {
       if (e.message === 'auth') return 'auth';
       if (e && (e.name === 'TypeError' || !navigator.onLine)) return 'offline';
@@ -272,6 +277,6 @@
     if (!session) showLogin(); else start();
   }
 
-  window.cloud = { enabled, sync, touch, logout, statusText, retry, init, get state() { return state; }, get booted() { return booted; } };
+  window.cloud = { enabled, sync, touch, logout, statusText, retry, init, get state() { return state; }, get booted() { return booted; }, get gymId() { return gymId(); } };
   init();
 })();

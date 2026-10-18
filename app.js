@@ -100,6 +100,12 @@ function pay(m, amount, mode, type, date) {
   db.payments.push({ id: uid(), memberId: m.id, name: m.name, date: date || today(), amount: +amount, mode, type });
 }
 function phone91(n) { const d = String(n).replace(/\D/g, ''); return d.length === 10 ? '91' + d : d; }
+/* Which gym this login belongs to. The cloud layer reads it from the signed-in
+   user's metadata (set in Supabase > Authentication for each gym's login);
+   'gym-main' is the fallback for the first gym. The database enforces it too
+   (RLS), so one gym can never see another gym's data even if the app is fooled. */
+function gymId() { return (window.cloud && cloud.gymId) || 'gym-main'; }
+function qrPayload(m) { return `GYM:${gymId()}:${m.id}:${m.token}`; }
 function waLink(m, kind) {
   const g = db.gym.name || 'our gym';
   const msg = kind === 'due'
@@ -421,9 +427,13 @@ function onScan(data) {
   if (!$('#sheet').hidden) return;
   if (data === scan.last && now - scan.lastAt < 6000) { scan.lastAt = now; return; }
   scan.last = data; scan.lastAt = now;
-  const p = String(data).split(':'), m = p[0] === 'GYM' && getM(p[1]);
-  if (!m) { beep(false); speak(VL().bad()); return showRes('stop', null, 'Member not found', ['This QR was made in a different app or on another phone, or the member was deleted.', 'Open the member here and use their QR entry card from this app.']); }
-  if (m.token !== p[2]) { beep(false); speak(VL().bad()); return showRes('stop', m, esc(m.name), ['This is an old QR card.', 'Please use the latest QR card from the gym.']); }
+  const p = String(data).split(':');
+  let m = null, tok = '', wrongGym = false;
+  if (p[0] === 'GYM' && p.length === 4) {
+    if (p[1] !== gymId()) wrongGym = true; else { m = getM(p[2]); tok = p[3]; }
+  } else if (p[0] === 'GYM' && p.length === 3) { m = getM(p[1]); tok = p[2]; } // cards issued before gym_id existed
+  if (wrongGym || !m) { beep(false); speak(VL().bad()); return showRes('stop', null, 'QR not accepted', [wrongGym ? 'This QR card belongs to a different gym.' : 'This QR was made in a different app or on another phone, or the member was deleted.', 'Open the member here and use their QR entry card from this app.']); }
+  if (m.token !== tok) { beep(false); speak(VL().bad()); return showRes('stop', m, esc(m.name), ['This is an old QR card.', 'Please use the latest QR card from the gym.']); }
   const s = status(m);
   if (s.key === 'expired') { beep(false); speak(VL().expired(m.name)); return showRes('stop', m, esc(m.name), [`Membership ended on ${fmtDate(m.expiry)}.`, 'Entry not allowed. Please renew first.'], true); }
   const r = checkIn(m);
@@ -438,29 +448,73 @@ function onScan(data) {
 
 /* ---------- QR card ---------- */
 function qrCardUrl(m) {
-  const qr = qrcode(0, 'M'); qr.addData(`GYM:${m.id}:${m.token}`); qr.make();
-  const n = qr.getModuleCount(), cell = Math.floor(440 / (n + 8)), size = cell * (n + 8);
-  const W = 600, H = 960, c = document.createElement('canvas'); c.width = W; c.height = H;
+  const qr = qrcode(0, 'M'); qr.addData(qrPayload(m)); qr.make();
+  const n = qr.getModuleCount(), cell = Math.floor(400 / (n + 8)), size = cell * (n + 8);
+  const W = 640, H = 1000, c = document.createElement('canvas'); c.width = W; c.height = H;
   const x = c.getContext('2d');
-  x.fillStyle = '#14161A'; x.fillRect(0, 0, W, H);
-  x.fillStyle = '#E8B84B'; x.fillRect(0, 118, W, 8);
-  x.fillStyle = '#fff'; x.textAlign = 'center';
-  x.font = "700 56px 'Barlow Condensed','Arial Narrow',sans-serif"; x.fillText((db.gym.name || 'Gym').slice(0, 24), W / 2, 84);
-  const ox = Math.round((W - size) / 2), oy = 160;
-  x.fillStyle = '#fff'; x.fillRect(ox - 10, oy - 10, size + 20, size + 20);
-  x.fillStyle = '#1E2328';
-  for (let r = 0; r < n; r++) for (let k = 0; k < n; k++) if (qr.isDark(r, k)) x.fillRect(ox + (k + 4) * cell, oy + (r + 4) * cell, cell, cell);
-  const F = "'Barlow Condensed','Arial Narrow',sans-serif", B = "'Barlow',Arial,sans-serif", by = oy + size + 80;
-  x.fillStyle = '#fff'; x.font = `700 52px ${F}`; x.fillText(m.name.slice(0, 26), W / 2, by);
-  x.fillStyle = '#B7BFC7'; x.font = `500 30px ${B}`; x.fillText(m.mobile, W / 2, by + 44);
-  x.fillStyle = '#3A424A'; x.fillRect(40, by + 74, W - 80, 2);
-  [['Plan', m.planName, 105], ['Joined', fmtDate(m.joinDate), 300], ['Valid till', fmtDate(m.expiry), 495]].forEach(([l, v, cx]) => {
-    x.fillStyle = '#B7BFC7'; x.font = `500 22px ${B}`; x.fillText(l, cx, by + 112);
-    let px = 32; x.fillStyle = '#fff';
-    do { x.font = `700 ${px}px ${F}`; px -= 2; } while (x.measureText(String(v)).width > 170 && px > 14);
-    x.fillText(String(v), cx, by + 150);
+  const F = "'Barlow Condensed','Arial Narrow',sans-serif", B = "'Barlow',Arial,sans-serif";
+  x.textAlign = 'center';
+  // rich black gradient background
+  const bg = x.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#0B0C0E'); bg.addColorStop(0.55, '#131519'); bg.addColorStop(1, '#08090B');
+  x.fillStyle = bg; x.fillRect(0, 0, W, H);
+  // gold gradient for frames and accents
+  const gold = x.createLinearGradient(0, 0, W, 0);
+  gold.addColorStop(0, '#A87E1F'); gold.addColorStop(0.5, '#F5D67B'); gold.addColorStop(1, '#A87E1F');
+  // double frame
+  x.strokeStyle = gold; x.lineWidth = 4; x.strokeRect(18, 18, W - 36, H - 36);
+  x.lineWidth = 1; x.globalAlpha = 0.55; x.strokeRect(32, 32, W - 64, H - 64); x.globalAlpha = 1;
+  // corner accents
+  x.lineWidth = 6; x.strokeStyle = '#F5D67B';
+  const L = 46, o = 18;
+  [[o, o, 1, 1], [W - o, o, -1, 1], [o, H - o, 1, -1], [W - o, H - o, -1, -1]].forEach(([cx, cy, dx, dy]) => {
+    x.beginPath(); x.moveTo(cx + dx * L, cy); x.lineTo(cx, cy); x.lineTo(cx, cy + dy * L); x.stroke();
   });
-  x.fillStyle = '#B7BFC7'; x.font = `22px ${B}`; x.fillText('Scan this at the gym entrance', W / 2, by + 205);
+  // top label
+  x.fillStyle = '#C9A44A'; x.font = `600 23px ${B}`;
+  x.fillText('M E M B E R   E N T R Y   C A R D', W / 2, 96);
+  // gym name in gold gradient (shrinks to fit long names)
+  const gg = x.createLinearGradient(0, 108, 0, 172);
+  gg.addColorStop(0, '#F8E19A'); gg.addColorStop(1, '#D9A93B');
+  x.fillStyle = gg;
+  let gfz = 66;
+  do { x.font = `700 ${gfz}px ${F}`; gfz -= 2; } while (x.measureText((db.gym.name || 'Gym').slice(0, 24)).width > W - 140 && gfz > 28);
+  x.fillText((db.gym.name || 'Gym').slice(0, 24), W / 2, 162);
+  // divider with diamond
+  const dy = 200;
+  x.strokeStyle = gold; x.lineWidth = 2;
+  x.beginPath(); x.moveTo(90, dy); x.lineTo(W / 2 - 26, dy); x.moveTo(W / 2 + 26, dy); x.lineTo(W - 90, dy); x.stroke();
+  x.save(); x.translate(W / 2, dy); x.rotate(Math.PI / 4);
+  x.fillStyle = '#E8B84B'; x.fillRect(-9, -9, 18, 18); x.restore();
+  // QR in white rounded panel with gold border
+  const ox = Math.round((W - size) / 2), oy = 232, pr = 22, px = ox - 16, py = oy - 16, ps = size + 32;
+  x.beginPath();
+  x.moveTo(px + pr, py); x.arcTo(px + ps, py, px + ps, py + ps, pr); x.arcTo(px + ps, py + ps, px, py + ps, pr);
+  x.arcTo(px, py + ps, px, py, pr); x.arcTo(px, py, px + ps, py, pr); x.closePath();
+  x.fillStyle = '#ffffff'; x.fill();
+  x.strokeStyle = gold; x.lineWidth = 3; x.stroke();
+  x.fillStyle = '#101114';
+  for (let r = 0; r < n; r++) for (let k = 0; k < n; k++) if (qr.isDark(r, k)) x.fillRect(ox + (k + 4) * cell, oy + (r + 4) * cell, cell, cell);
+  // member name + mobile
+  const by = oy + size + 92;
+  x.fillStyle = '#ffffff'; x.font = `700 58px ${F}`;
+  x.fillText(m.name.slice(0, 26), W / 2, by);
+  x.fillStyle = '#E8B84B'; x.font = `600 32px ${B}`;
+  x.fillText(m.mobile, W / 2, by + 50);
+  // info strip
+  x.strokeStyle = 'rgba(232,184,75,0.35)'; x.lineWidth = 1;
+  x.beginPath(); x.moveTo(70, by + 82); x.lineTo(W - 70, by + 82); x.stroke();
+  [['Plan', m.planName, 130], ['Joined', fmtDate(m.joinDate), W / 2], ['Valid till', fmtDate(m.expiry), W - 130]].forEach(([l, v, cx]) => {
+    x.fillStyle = '#8E96A0'; x.font = `500 22px ${B}`; x.fillText(l, cx, by + 120);
+    let fz = 36; x.fillStyle = '#F5D67B';
+    do { x.font = `700 ${fz}px ${F}`; fz -= 2; } while (x.measureText(String(v)).width > 180 && fz > 14);
+    x.fillText(String(v), cx, by + 160);
+  });
+  // footer
+  x.fillStyle = '#8E96A0'; x.font = `500 22px ${B}`;
+  x.fillText('Scan this at the gym entrance', W / 2, H - 78);
+  x.fillStyle = '#C9A44A'; x.font = `600 20px ${B}`;
+  x.fillText((db.gym.name || '').slice(0, 30), W / 2, H - 48);
   return c.toDataURL('image/png');
 }
 async function qrFile(m) {
@@ -824,12 +878,16 @@ const actions = {
   renew: el => renewForm(el.dataset.id),
   del: el => {
     const m = getM(el.dataset.id);
-    if (confirm(`Delete ${m.name}? Past payments stay in reports.`)) {
-      db.members = db.members.filter(x => x.id !== m.id); save(); closeSheet(); render(); toast('Member deleted');
+    if (confirm(`Delete ${m.name}? Their payments, attendance and visits will also be deleted. This cannot be undone.`)) {
+      db.members = db.members.filter(x => x.id !== m.id);
+      db.payments = db.payments.filter(x => x.memberId !== m.id);
+      Object.keys(db.checkins).forEach(d => { delete db.checkins[d][m.id]; if (!Object.keys(db.checkins[d]).length) delete db.checkins[d]; });
+      Object.keys(db.attendance).forEach(d => { db.attendance[d] = db.attendance[d].filter(id => id !== m.id); if (!db.attendance[d].length) delete db.attendance[d]; });
+      save(); closeSheet(); render(); toast('Member and all their data deleted');
     }
   },
   camToggle: () => { if (scan.stream) { ui.camWanted = false; stopCam(); $('#camBtn').textContent = 'Start camera'; $('#scanMsg').textContent = 'Camera is off'; } else { ui.camWanted = true; startCam(); } },
-  simScan: () => { const m = getM($('#simSel').value); if (m) { scan.last = ''; onScan(`GYM:${m.id}:${m.token}`); } },
+  simScan: () => { const m = getM($('#simSel').value); if (m) { scan.last = ''; onScan(qrPayload(m)); } },
   manual: () => {
     if (!db.gym.pin) { toast('Set an owner PIN in Settings first', true); return settingsSheet(); }
     openSheet('Owner PIN', `<form data-form="pin"><label>Enter PIN<input name="pin" type="password" inputmode="numeric" maxlength="4" required autofocus></label><button class="btn primary wide">Unlock manual entry</button></form>`);
