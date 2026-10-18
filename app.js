@@ -811,6 +811,9 @@ function settingsSheet() {
     <hr><h3 style="font-size:20px;margin:0 0 8px">Online database</h3>
     <p class="mini" style="margin:0 0 10px">${esc(window.cloud ? cloud.statusText() : '')}</p>
     ${window.cloud && cloud.enabled ? `<div class="actions"><button class="btn ghost" data-act="logout">Log out</button></div>` : ''}
+    <hr><h3 style="font-size:20px;margin:0 0 8px">Data backup</h3>
+    <p class="mini" style="margin:0 0 10px">Download your complete gym data as a file. Keep it somewhere safe — everything can be restored from it.</p>
+    <div class="actions"><button class="btn ghost" data-act="dlBackup">Download backup</button></div>
     <hr><div class="actions">${window.cloud && cloud.enabled ? '' : '<button class="btn ghost" data-act="demo">Load demo data</button>'}<button class="btn danger" data-act="reset">Delete all data</button></div>`);
 }
 
@@ -949,6 +952,15 @@ const actions = {
   exportRep: exportReport, exportMembers, exportPending, exportAtt: exportAttendance, exportAttDay,
   settings: settingsSheet,
   logout: () => { if (confirm('Log out from this phone?')) { closeSheet(); cloud.logout(); } },
+  dlBackup: () => {
+    const payload = { app: 'gym-manager', gymId: (window.cloud && cloud.gymId) || 'gym-main', exportedAt: new Date().toISOString(), data: db };
+    const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = `gym-backup-${today()}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    toast('Backup downloaded — keep this file safe');
+  },
   closeSheet,
   addPlan: () => $('#plans').insertAdjacentHTML('beforeend', planRow()),
   rmPlan: el => { if (document.querySelectorAll('.planrow').length > 1) el.closest('.planrow').remove(); else toast('Keep at least one plan', true); },
