@@ -1,0 +1,64 @@
+# Admin Panel — Setup Guide (ek baar, ~10 minute)
+
+Panel khulega: **your-app-link/admin.html**
+Kaam: saare gyms ek jagah, trial/license ek click me control, naya demo
+banana, kisi ka access band karna. SQL/dashboard kholne ki zaroorat nahi.
+
+Peeche ek chhota backend hai (Supabase Edge Function) — master key sirf
+wahi rehti hai, website ke code me kabhi nahi. Panel bina admin login ke
+bekar hai: har request par server check karta hai ki login admin hai ya
+nahi.
+
+## Setup ke 4 step
+
+### 1. License table (agar pehle nahi chalaya)
+Supabase > SQL Editor me `supabase-license.sql` ek baar Run karo.
+
+### 2. Apna admin account banao
+Supabase > Authentication > Users > **Add user**:
+- Apna email + ek strong password, **Auto Confirm User ON**
+- Metadata kuch mat bharo
+
+Phir SQL Editor me `supabase-admin-setup.sql` chalao — usme sirf apna
+admin email daalna hai (jahan `TUMHARA-ADMIN-EMAIL@example.com` likha
+hai). Isse tumhara account **admin** ban jayega.
+
+### 3. Edge Function deploy karo (backend)
+Supabase > **Edge Functions** > **Create a new function**:
+- Naam: `admin`  (bilkul yahi naam rakhna)
+- Code: `admin-function/index.ts` file ka poora text paste karo
+- **Deploy** dabao
+
+Bas. Koi secret/key alag se nahi dalna — Supabase function ko master
+key khud deta hai.
+
+### 4. Panel kholo
+Browser me `admin.html` kholo, apne admin email/password se login karo.
+
+## Panel me kya-kya hota hai
+
+- **Upar ke number:** total gyms, kitne active (paid), kitne trial par,
+  kitne locked.
+- **Naya demo gym:** gym ka naam + owner ka email + password (Generate
+  button hai) > **Demo gym banao**. 7-day trial khud ban jayega aur ek
+  ready-made message milega — Copy karke owner ko WhatsApp kar do,
+  usme app link + login + demo ki last date sab hoga.
+- **Har gym ke card par:**
+  - **Activate (paid)** — payment aa gaya ho to. Gym lifetime unlock.
+  - **+7 din trial** — demo aur badhana ho (current end date se aage
+    badhta hai, beech me lock ho gaya ho to aaj se 7 din).
+  - **Abhi lock karo** — turant band karna ho to.
+  - Status pill: Active / Trial · X din left / Locked / No license.
+  - Members count aur last active time — kaunsa gym sach me use ho
+    raha hai, pata chalta hai.
+  - Har login ke saamne **Reset password** (owner bhool gaya ho to)
+    aur **Access band karo** (login delete — data safe rehta hai).
+
+## Safety notes
+
+- Admin password strong rakho — ye ek password saare gyms ki chaabi
+  hai. Kisi ke saath share mat karo.
+- `admin.html` public link par khulti hai, lekin bina admin login ke
+  andar kuch nahi hota — har kaam server par dobara check hota hai.
+- Gym owner apna license khud change nahi kar sakta (database sirf
+  padhne deta hai). Unlock sirf tum kar sakte ho — panel se ya SQL se.
