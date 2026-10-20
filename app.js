@@ -229,12 +229,12 @@ function memberRow(m) {
   return `<button class="row" data-act="member" data-id="${m.id}">
     ${avatar(m, 40)}
     <span class="who"><b>${esc(m.name)}</b><small>${esc(m.mobile)}</small></span>
-    <span class="right"><span class="tag ${s.key}">${s.label}</span>${m.due > 0 ? `<small class="due">Due ${inr(m.due)}</small>` : ''}</span>
+    <span class="right">${m.pt ? `<span class="tag pt">PT · ${esc(m.pt)}</span>` : ''}<span class="tag ${s.key}">${s.label}</span>${m.due > 0 ? `<small class="due">Due ${inr(m.due)}</small>` : ''}</span>
   </button>`;
 }
 function memberMatches(m, f) {
   const k = status(m).key;
-  return f === 'active' ? k !== 'expired' : f === 'expiring' ? k === 'expiring' : f === 'expired' ? k === 'expired' : f === 'pending' ? m.due > 0 : true;
+  return f === 'active' ? k !== 'expired' : f === 'expiring' ? k === 'expiring' : f === 'expired' ? k === 'expired' : f === 'pending' ? m.due > 0 : f === 'pt' ? !!m.pt : true;
 }
 function memberList() {
   const q = ui.q.trim().toLowerCase();
@@ -244,7 +244,7 @@ function memberList() {
   return list.map(memberRow).join('');
 }
 function viewMembers() {
-  const F = [['all', 'All'], ['active', 'Active'], ['expiring', 'Ending soon'], ['expired', 'Expired'], ['pending', 'Fees due']];
+  const F = [['all', 'All'], ['active', 'Active'], ['expiring', 'Ending soon'], ['expired', 'Expired'], ['pending', 'Fees due'], ['pt', 'PT members']];
   return `
   <input class="search" id="q" type="search" placeholder="Search by name or mobile" value="${esc(ui.q)}" autocomplete="off">
   <div class="chips">${F.map(([k, l]) => `<button class="chip ${ui.filter === k ? 'on' : ''}" data-act="filter" data-f="${k}">${l} ${db.members.filter(m => memberMatches(m, k)).length}</button>`).join('')}</div>
@@ -563,6 +563,30 @@ function recentVisits(id) {
   if (!days.length) return '<div class="list"><div class="empty">No visits yet.</div></div>';
   return `<div class="list">${days.map(d => `<div class="row"><span class="who"><b>${fmtDate(d)}</b></span><span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${visitTags(db.checkins[d][id])}</span></div>`).join('')}</div>`;
 }
+/* ---------- member attendance detail ---------- */
+function memberDays(id) {
+  const days = new Set([...Object.keys(db.attendance).filter(d => db.attendance[d].includes(id)),
+    ...Object.keys(db.checkins).filter(d => (db.checkins[d][id] || []).length)]);
+  return [...days].sort().reverse();
+}
+function attDetail(id) {
+  const days = memberDays(id);
+  if (!days.length) return '<div class="list"><div class="empty">No attendance yet.</div></div>';
+  const ym = today().slice(0, 7), lm = addMonths(ym + '-01', -1).slice(0, 7);
+  let M = 0, E = 0;
+  days.forEach(d => ((db.checkins[d] || {})[id] || []).forEach(x => x.s === 'M' ? M++ : E++));
+  const thisM = days.filter(d => d.startsWith(ym)).length, lastM = days.filter(d => d.startsWith(lm)).length;
+  const shown = days.slice(0, 30);
+  return `<div class="stats" style="margin-top:0">
+      <div class="stat"><b>${days.length}</b><small>Total visit days</small></div>
+      <div class="stat"><b>${thisM}</b><small>This month (${lastM} last month)</small></div>
+      <div class="stat"><b>${M}</b><small>Morning visits</small></div>
+      <div class="stat"><b>${E}</b><small>Evening visits</small></div>
+    </div>
+    <p class="mini" style="margin:10px 0 8px">Last visit: <b>${fmtDate(days[0])}</b></p>
+    <div class="list">${shown.map(d => { const v = (db.checkins[d] || {})[id] || []; return `<div class="row"><span class="who"><b>${fmtDate(d)}</b></span><span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${v.length ? visitTags(v) : '<span class="tag active">Present</span>'}</span></div>`; }).join('')}</div>
+    ${days.length > 30 ? `<p class="mini" style="margin-top:8px">Showing the last 30 visit days of ${days.length}.</p>` : ''}`;
+}
 function fallbackCopy(text, done) {
   const ta = document.createElement('textarea');
   ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
@@ -677,8 +701,8 @@ function exportAttDay() {
   download(`gym-attendance-${d}.csv`, csv(rows));
 }
 function exportMembers() {
-  const rows = [['Name', 'Mobile', 'Gender', 'Address', 'Joining date', 'Plan', 'Plan fee', 'Membership ends', 'Status', 'Fees due']];
-  db.members.forEach(m => rows.push([m.name, txt(m.mobile), m.gender || '', m.address || '', m.joinDate, m.planName, m.fee, m.expiry, status(m).key, m.due || 0]));
+  const rows = [['Name', 'Mobile', 'Gender', 'Address', 'Joining date', 'Plan', 'Personal trainer', 'Plan fee', 'Membership ends', 'Status', 'Fees due']];
+  db.members.forEach(m => rows.push([m.name, txt(m.mobile), m.gender || '', m.address || '', m.joinDate, m.planName, m.pt || '', m.fee, m.expiry, status(m).key, m.due || 0]));
   download(`gym-members-${today()}.csv`, csv(rows));
 }
 function exportAttendance() {
@@ -712,6 +736,9 @@ function genderAddress(m, req) {
   return `<div class="two"><label>Gender<select name="gender" ${req ? 'required' : ''}><option value="" ${g ? '' : 'selected'} ${req ? 'disabled' : ''}>Select</option>${['Male', 'Female', 'Other'].map(x => `<option ${g === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
     <label>Address<input name="address" value="${esc(m ? m.address : '')}" placeholder="Area / city"></label></div>`;
 }
+function ptField(m) {
+  return `<label>Personal trainer (optional)<input name="pt" value="${esc(m ? m.pt || '' : '')}" placeholder="Trainer name — leave blank if no PT"></label>`;
+}
 async function photoFromFile(file) {
   const url = URL.createObjectURL(file), img = new Image();
   img.src = url; await img.decode();
@@ -727,6 +754,7 @@ function addForm() {
     ${photoField()}<label>Name<input name="name" required></label>
     <label>Mobile number<input name="mobile" type="tel" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" required placeholder="10 digit number"></label>
     ${genderAddress(null, true)}
+    ${ptField(null)}
     <label>Joining date<input name="joinDate" type="date" required value="${today()}"></label>
     <label>Plan<select name="plan" id="planSel">${planOptions()}</select></label>
     <div class="two"><label>Plan fee<input name="fee" id="feeIn" type="number" min="0" required value="${p.fee}"></label>
@@ -740,6 +768,7 @@ function editForm(id) {
     ${photoField(m)}<label>Name<input name="name" required value="${esc(m.name)}"></label>
     <label>Mobile number<input name="mobile" type="tel" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" required value="${esc(m.mobile)}"></label>
     ${genderAddress(m, false)}
+    ${ptField(m)}
     <label>Joining date<input name="joinDate" type="date" required value="${m.joinDate}"></label>
     <label>Membership ends on<input name="expiry" type="date" required value="${m.expiry}"></label>
     <label>Fees due<input name="due" type="number" min="0" value="${m.due || 0}"></label>
@@ -772,10 +801,10 @@ function renewForm(id) {
 function memberSheet(id) {
   const m = getM(id), s = status(m), ym = today().slice(0, 7);
   const pays = db.payments.filter(p => p.memberId === id).sort((a, b) => b.date.localeCompare(a.date));
-  const visits = Object.keys(db.attendance).filter(d => d.startsWith(ym) && db.attendance[d].includes(id)).length;
+  const visits = memberDays(id).filter(d => d.startsWith(ym)).length;
   openSheet(m.name, `
     <div class="hdrline">${avatar(m, 88)}<div><b style="font:700 28px var(--head)">${esc(m.name)}</b><br><span class="tag ${s.key}">${s.label}</span></div></div>
-    <dl class="kv"><dt>Mobile</dt><dd>${esc(m.mobile)}</dd><dt>Gender</dt><dd>${esc(m.gender || '-')}</dd><dt>Address</dt><dd>${esc(m.address || '-')}</dd><dt>Plan</dt><dd>${esc(m.planName)}</dd><dt>Joined</dt><dd>${fmtDate(m.joinDate)}</dd>
+    <dl class="kv"><dt>Mobile</dt><dd>${esc(m.mobile)}</dd><dt>Gender</dt><dd>${esc(m.gender || '-')}</dd><dt>Address</dt><dd>${esc(m.address || '-')}</dd><dt>Plan</dt><dd>${esc(m.planName)}</dd><dt>Personal trainer</dt><dd>${m.pt ? esc(m.pt) : '-'}</dd><dt>Joined</dt><dd>${fmtDate(m.joinDate)}</dd>
     <dt>Membership ends</dt><dd>${fmtDate(m.expiry)}</dd><dt>Fees due</dt><dd class="${m.due > 0 ? 'due' : ''}">${inr(m.due)}</dd><dt>Visits this month</dt><dd>${visits}</dd></dl>
     <div class="actions">
       <button class="btn primary" data-act="renew" data-id="${id}">Renew</button>
@@ -785,8 +814,8 @@ function memberSheet(id) {
       <button class="btn ghost" data-act="edit" data-id="${id}">Edit</button>
       <button class="btn danger" data-act="del" data-id="${id}">Delete</button>
       <button class="btn" style="grid-column:1/-1" data-act="qr" data-id="${id}">QR entry card</button></div>
-    <h3 style="font-size:20px;margin:6px 0 8px">Recent visits</h3>
-    ${recentVisits(id)}
+    <h3 style="font-size:20px;margin:6px 0 8px">Attendance detail</h3>
+    ${attDetail(id)}
     <h3 style="font-size:20px;margin:14px 0 8px">Payment history</h3>
     ${pays.length ? `<div class="list">${pays.map(p => `<div class="row"><span class="who"><b>${fmtDate(p.date)}</b><small>${esc(p.mode)}, ${esc(p.type)}</small></span><span class="amt">${inr(p.amount)}</span><button class="ib" data-act="delPay" data-id="${p.id}" aria-label="Delete this payment">&times;</button></div>`).join('')}</div>` : '<div class="list"><div class="empty">No payments yet.</div></div>'}`);
 }
@@ -824,7 +853,7 @@ const handlers = {
     if (db.members.some(m => m.mobile === mobile)) return toast('This mobile number is already registered', true);
     const plan = db.plans.find(p => p.id === f.get('plan')); if (!plan) return toast('Add a plan in Settings first', true);
     const fee = +f.get('fee'), paid = Math.min(+f.get('paid'), fee), join = f.get('joinDate');
-    const m = { id: uid(), name: f.get('name').trim(), mobile, joinDate: join, planId: plan.id, planName: plan.name, fee, expiry: addMonths(join, plan.months), due: fee - paid, token: rtoken(), gender: f.get('gender') || '', address: (f.get('address') || '').trim(), photo: f.get('photo') || '' };
+    const m = { id: uid(), name: f.get('name').trim(), mobile, joinDate: join, planId: plan.id, planName: plan.name, fee, expiry: addMonths(join, plan.months), due: fee - paid, token: rtoken(), gender: f.get('gender') || '', address: (f.get('address') || '').trim(), pt: (f.get('pt') || '').trim(), photo: f.get('photo') || '' };
     db.members.push(m);
     if (paid > 0) pay(m, paid, f.get('mode'), 'Admission', join);
     save(); render();
@@ -840,7 +869,7 @@ const handlers = {
     const m = getM(id), mobile = f.get('mobile').trim();
     if (db.members.some(x => x.id !== id && x.mobile === mobile)) return toast('This mobile number is already registered', true);
     const changed = m.expiry !== f.get('expiry') || m.mobile !== mobile || m.joinDate !== f.get('joinDate') || m.name !== f.get('name').trim();
-    Object.assign(m, { name: f.get('name').trim(), mobile, joinDate: f.get('joinDate'), expiry: f.get('expiry'), due: +f.get('due') || 0, gender: f.get('gender') || '', address: (f.get('address') || '').trim(), photo: f.get('photo') || '' });
+    Object.assign(m, { name: f.get('name').trim(), mobile, joinDate: f.get('joinDate'), expiry: f.get('expiry'), due: +f.get('due') || 0, gender: f.get('gender') || '', address: (f.get('address') || '').trim(), pt: (f.get('pt') || '').trim(), photo: f.get('photo') || '' });
     save(); render();
     if (changed) qrSheet(id, 'Details updated. Send the updated card if the dates or number changed.'); else { closeSheet(); toast('Changes saved'); }
   },

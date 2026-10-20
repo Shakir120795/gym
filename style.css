@@ -122,6 +122,7 @@ button.row:active{background:var(--card2)}
 .tag.active{background:rgba(67,197,121,.16);color:#6FD598}
 .tag.expiring{background:rgba(232,184,75,.16);color:var(--gold2)}
 .tag.expired{background:rgba(228,87,79,.16);color:#F08A84}
+.tag.pt{background:rgba(130,150,255,.16);color:#A9BAFF;max-width:140px;overflow:hidden;text-overflow:ellipsis}
 
 /* ---------- controls ---------- */
 .search{width:100%;padding:13px 15px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink)}
