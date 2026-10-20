@@ -1,8 +1,9 @@
 # Admin Panel — Setup Guide (ek baar, ~10 minute)
 
 Panel khulega: **your-app-link/admin.html**
-Kaam: saare gyms ek jagah, trial/license ek click me control, naya demo
-banana, kisi ka access band karna. SQL/dashboard kholne ki zaroorat nahi.
+Do tab hain: **Saare Gyms** (control) aur **Naya Gym Banao**.
+Kaam: saare gyms ek jagah, trial/plan ek click me control, naya gym
+trial ya seedha paid plan ke saath banana, kisi ka access band/wapas.
 
 Peeche ek chhota backend hai (Supabase Edge Function) — master key sirf
 wahi rehti hai, website ke code me kabhi nahi. Panel bina admin login ke
@@ -41,18 +42,26 @@ Browser me `admin.html` kholo, apne admin email/password se login karo.
 
 - **Upar ke number:** total gyms, kitne active (paid), kitne trial par,
   kitne locked.
-- **Naya demo gym:** gym ka naam + owner ka email + password (Generate
-  button hai) > **Demo gym banao**. 7-day trial khud ban jayega aur ek
-  ready-made message milega — Copy karke owner ko WhatsApp kar do,
-  usme app link + login + demo ki last date sab hoga.
+- **Naya gym (dusra tab):** gym ka naam + owner ka email + password
+  (Generate button hai) + **plan chunno**:
+  - *Trial* — 7 din free demo.
+  - *Monthly / 3 Months / 6 Months / Yearly / Lifetime* — seedha paid
+    start, bina trial ke.
+  Gym ka naam pehle din se save ho jata hai — panel me id ki jagah
+  hamesha saaf naam dikhega. Banne ke baad ek ready-made message
+  milega — Copy karke owner ko WhatsApp kar do, usme app link +
+  login + plan ki last date sab hoga.
 - **Har gym ke card par:**
   - **Plan line** — gym ke paas kaunsa plan hai (Trial / Monthly /
     3 Months / 6 Months / Yearly / Lifetime) aur kab khatam hoga.
     Plan khatam hote hi app **khud lock** ho jati hai.
-  - **Plan buttons (ek click upgrade/renew)** — payment aane par bas
-    plan ka button dabao: Monthly (30 din), 3 Months, 6 Months,
-    Yearly, Lifetime. Renewal bachi hui duration ke aage se judta
-    hai — owner ka ek din bhi waste nahi hota.
+  - **Plan do / renew karo** — plan buttons (Monthly 30 din,
+    3 Months, 6 Months, Yearly, Lifetime). Renewal bachi hui
+    duration ke aage se judta hai — owner ka ek din bhi waste
+    nahi hota.
+  - **Plan badlo** — dusri button line: plan AAJ se fresh shuru
+    hota hai, purani bachi duration khatam. Galti sudharne ya plan
+    change karne ke liye.
   - **+7 din trial** — sirf trial gyms ke liye, demo badhana ho to.
   - **Abhi lock karo** — turant band karna ho to.
   - Status pill: Active / Trial · X din left / Locked / No license.
@@ -61,10 +70,11 @@ Browser me `admin.html` kholo, apne admin email/password se login karo.
   - Har login ke saamne **Reset password** (owner bhool gaya ho to)
     aur **Access band karo** (login delete — data safe rehta hai).
     Aakhri login band karne par panel pehle khaas warning deta hai.
-  - **Login banao (har card ke neeche)** — kisi gym ka login delete
-    ho jaye ya dusra staff login chahiye ho to yahi se naya login
-    banta hai. Gym ka data aur plan bilkul nahi badalta — sirf nayi
-    chaabi banti hai.
+  - **Login banao** — jis gym ka koi login nahi hai, uske card par
+    form khula dikhta hai. Jis gym ka login pehle se hai, wahan form
+    "+ Ek aur login banao" button ke peeche rehta hai (dusra staff
+    login chahiye ho tab). Gym ka data aur plan bilkul nahi badalta
+    — sirf nayi chaabi banti hai.
   - Tumhara khud ka admin account is list me **nahi aata** — admin
     gym ka login nahi hota.
 - **Upar alert strip:** jo gyms band ho chuke hain (plan/trial

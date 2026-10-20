@@ -58,6 +58,7 @@ async function call(action, payload) {
 /* ---------- status ---------- */
 const PLAN_BTNS = [['monthly', 'Monthly · 30 din', 30], ['quarterly', '3 Months', 90], ['half', '6 Months', 180], ['yearly', 'Yearly', 365], ['lifetime', 'Lifetime', null]];
 const daysTo = s => Math.round((parseD(s) - parseD(todayStr())) / 864e5);
+const displayName = g => g.name || g.gymId.replace(/^gym-/, '').split('-').filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1)).join(' ') || g.gymId;
 function statusOf(g) {
   if (g.status === 'active') {
     if (g.planEnds && daysTo(g.planEnds) < 0) return { key: 'locked', label: 'Locked · plan over' };
@@ -83,10 +84,10 @@ function renderAlerts() {
   const locked = [], soon = [];
   gyms.forEach(g => {
     const s = statusOf(g);
-    if (s.key === 'locked') locked.push(g.name || g.gymId);
+    if (s.key === 'locked') locked.push(displayName(g));
     else {
       const ends = g.status === 'trial' ? g.trialEnds : g.planEnds;
-      if (ends && daysTo(ends) >= 0 && daysTo(ends) <= 3) soon.push(`${g.name || g.gymId} (${daysTo(ends) === 0 ? 'aaj last day' : daysTo(ends) + ' din'})`);
+      if (ends && daysTo(ends) >= 0 && daysTo(ends) <= 3) soon.push(`${displayName(g)} (${daysTo(ends) === 0 ? 'aaj last day' : daysTo(ends) + ' din'})`);
     }
   });
   let h = '';
@@ -108,29 +109,35 @@ function gymCard(g) {
   const planLine = g.status === 'active'
     ? `<p class="small" style="margin:8px 0 0">Plan: <b style="color:var(--gold2)">${esc(g.plan || 'Lifetime')}</b>${g.planEnds ? ` · khatam: ${fmtDate(g.planEnds)} (${daysTo(g.planEnds)} din)` : ''}</p>`
     : (g.status === 'trial' && g.trialEnds ? `<p class="small" style="margin:8px 0 0">Plan: <b style="color:var(--gold2)">Trial</b> · khatam: ${fmtDate(g.trialEnds)}</p>` : '');
+  const planBtns = (act, primary) => PLAN_BTNS.map(([k, l]) => `<button class="btn small${primary ? ' primary' : ''}" data-aact="${act}" data-plan="${k}" data-g="${esc(g.gymId)}">${l}</button>`).join('');
   const upgradeRow = isLifetime ? '' : `
-    <p class="small" style="margin:12px 0 0">Payment aane par plan do / renew karo:</p>
-    <div class="rowbtns" style="margin-top:6px">
-      ${PLAN_BTNS.map(([k, l]) => `<button class="btn small${k === 'lifetime' ? '' : ' primary'}" data-aact="upgrade" data-plan="${k}" data-g="${esc(g.gymId)}">${l}</button>`).join('')}
-    </div>`;
-  return `<div class="card">
-    <div class="gym-head"><div><b>${esc(g.name || g.gymId)}</b><br><span class="small">${esc(g.gymId)} · ${g.members} members · last active: ${last}</span></div>
-      <span class="pill ${s.key}">${s.label}</span></div>
-    ${planLine}
-    ${upgradeRow}
-    <div class="rowbtns">
-      ${g.status === 'trial' ? `<button class="btn small" data-aact="extend" data-g="${esc(g.gymId)}">+7 din trial</button>` : ''}
-      ${s.key !== 'locked' ? `<button class="btn small danger" data-aact="lock" data-g="${esc(g.gymId)}">Abhi lock karo</button>` : ''}
-    </div>
-    ${users}
-    <div style="margin-top:12px;border-top:1px dashed var(--line);padding-top:10px">
-      <p class="small" style="margin:0 0 6px">Is gym ke liye naya login banao — purana login band ho gaya ho to yahi se access wapas milta hai (data aur plan pehle jaisa rahega):</p>
+    <p class="small" style="margin:12px 0 0">Plan do / renew karo (bachi hui duration aage judti hai):</p>
+    <div class="rowbtns" style="margin-top:6px">${planBtns('upgrade', true)}</div>`;
+  const changeRow = `
+    <p class="small" style="margin:12px 0 0">Plan badlo (aaj se fresh plan — purani bachi duration khatam ho jayegi):</p>
+    <div class="rowbtns" style="margin-top:6px">${planBtns('setPlan', false)}</div>`;
+  const addUserForm = `
+    <div id="nu-form-${esc(g.gymId)}" ${g.users.length ? 'hidden' : ''} style="margin-top:12px;border-top:1px dashed var(--line);padding-top:10px">
+      <p class="small" style="margin:0 0 6px">${g.users.length ? 'Is gym ke liye ek aur login banao (staff ke liye) — data aur plan pehle jaisa rahega:' : 'Is gym ke liye login banao — yahi se is gym ka access milta hai (data aur plan pehle jaisa rahega):'}</p>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <input id="nu-e-${esc(g.gymId)}" type="email" placeholder="Email" style="flex:1;min-width:150px">
         <input id="nu-p-${esc(g.gymId)}" type="text" placeholder="Password (6+)" style="flex:1;min-width:110px">
         <button class="btn small primary" data-aact="addUser" data-g="${esc(g.gymId)}">Login banao</button>
       </div>
+    </div>`;
+  return `<div class="card">
+    <div class="gym-head"><div><b>${esc(displayName(g))}</b><br><span class="small">${esc(g.gymId)} · ${g.members} members · last active: ${last}</span></div>
+      <span class="pill ${s.key}">${s.label}</span></div>
+    ${planLine}
+    ${upgradeRow}
+    ${changeRow}
+    <div class="rowbtns">
+      ${g.status === 'trial' ? `<button class="btn small" data-aact="extend" data-g="${esc(g.gymId)}">+7 din trial</button>` : ''}
+      ${s.key !== 'locked' ? `<button class="btn small danger" data-aact="lock" data-g="${esc(g.gymId)}">Abhi lock karo</button>` : ''}
     </div>
+    ${users}
+    ${g.users.length ? `<div class="rowbtns"><button class="btn small" data-aact="toggleAddUser" data-g="${esc(g.gymId)}">+ Ek aur login banao</button></div>` : ''}
+    ${addUserForm}
   </div>`;
 }
 function render() {
@@ -160,7 +167,24 @@ async function upgradeAction(gid, planKey) {
   try { await call('upgrade', { gymId: gid, plan: planKey }); await loadGyms(); }
   catch (e) { alert(e.message); }
 }
+async function setPlanAction(gid, planKey) {
+  const p = PLAN_BTNS.find(x => x[0] === planKey);
+  const label = p ? p[0] === 'lifetime' ? 'Lifetime' : p[1].split(' ·')[0] : planKey;
+  const days = p ? p[2] : null;
+  if (!confirm(`${gid} ka plan badal dun? Naya plan ${label} AAJ se shuru hoga${days ? ' aur ' + days + ' din chalega' : ''} — purani bachi hui duration khatam ho jayegi.`)) return;
+  try { await call('setPlan', { gymId: gid, plan: planKey }); await loadGyms(); }
+  catch (e) { alert(e.message); }
+}
+function switchTab(which) {
+  const gymsOn = which === 'gyms';
+  $('#tabGyms').hidden = !gymsOn;
+  $('#tabNew').hidden = gymsOn;
+  $('#tabBtnGyms').className = 'btn' + (gymsOn ? ' primary' : '');
+  $('#tabBtnNew').className = 'btn' + (gymsOn ? '' : ' primary');
+}
 document.addEventListener('click', async e => {
+  const tb = e.target.closest('[data-atab]');
+  if (tb) { switchTab(tb.dataset.atab); return; }
   const b = e.target.closest('[data-aact]');
   if (!b) return;
   const act = b.dataset.aact;
@@ -168,6 +192,8 @@ document.addEventListener('click', async e => {
   else if (act === 'logout') logout();
   else if (act === 'genPw') { $('#demoPw').value = 'Gym@' + Math.floor(100000 + Math.random() * 900000); }
   else if (act === 'upgrade') upgradeAction(b.dataset.g, b.dataset.plan);
+  else if (act === 'setPlan') setPlanAction(b.dataset.g, b.dataset.plan);
+  else if (act === 'toggleAddUser') { const f = $('#nu-form-' + b.dataset.g); if (f) f.hidden = !f.hidden; }
   else if (act === 'extend' || act === 'lock') gymAction(act, b.dataset.g);
   else if (act === 'addUser') {
     const gid = b.dataset.g;
@@ -215,13 +241,14 @@ $('#loginForm').addEventListener('submit', async e => {
 $('#demoForm').addEventListener('submit', async e => {
   e.preventDefault();
   const f = new FormData(e.target), msg = $('#demoMsg');
-  msg.textContent = 'Demo gym ban raha hai...';
+  msg.textContent = 'Gym ban raha hai...';
   try {
-    const j = await call('createDemo', { gymName: f.get('gymName'), email: f.get('email'), password: f.get('password') });
+    const j = await call('createDemo', { gymName: f.get('gymName'), email: f.get('email'), password: f.get('password'), plan: f.get('plan') || 'trial' });
     msg.textContent = '';
     const link = location.origin + '/';
     $('#demoResult').hidden = false;
-    $('#demoResult').textContent =
+    const isTrial = !j.plan || j.plan === 'Trial';
+    $('#demoResult').textContent = isTrial ?
 `Gym Manager — tumhara 7-day FREE demo ready hai!
 
 App: ${link}
@@ -229,7 +256,15 @@ Email: ${j.email}
 Password: ${f.get('password')}
 Demo valid till: ${fmtDate(j.trialEnds)}
 
-Login karke apna gym setup kar lo. Pasand aaye to activate karne ke liye mujhe message karna.`;
+Login karke apna gym setup kar lo. Pasand aaye to activate karne ke liye mujhe message karna.` :
+`Gym Manager — tumhara gym ready hai!
+
+App: ${link}
+Email: ${j.email}
+Password: ${f.get('password')}
+Plan: ${j.plan}${j.planEnds ? ' · valid till: ' + fmtDate(j.planEnds) : ' · kabhi expire nahi hoga'}
+
+Login karke apna gym setup kar lo. Koi dikkat aaye to mujhe message karna.`;
     if (!$('#copyBtn')) {
       const btn = document.createElement('button');
       btn.className = 'btn small'; btn.id = 'copyBtn'; btn.dataset.aact = 'copyDemo'; btn.textContent = 'Copy login details';

@@ -19,7 +19,7 @@
   .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:18px;margin-bottom:14px;position:relative;overflow:hidden}
   .card::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:var(--grad)}
   label{display:block;font-size:13px;color:var(--mute);margin:10px 0 4px}
-  input{width:100%;background:var(--card2);border:1px solid var(--line);border-radius:10px;color:var(--txt);padding:11px 12px;font:inherit}
+  input,select{width:100%;background:var(--card2);border:1px solid var(--line);border-radius:10px;color:var(--txt);padding:11px 12px;font:inherit}
   .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;background:var(--card2);border:1px solid var(--line);color:var(--txt);border-radius:11px;padding:10px 16px;font:600 15px Barlow;cursor:pointer;text-decoration:none}
   .btn.primary{background:var(--grad);color:#1A1405;border:0}
   .btn.danger{background:transparent;border-color:var(--red);color:#F08A84}
@@ -77,11 +77,21 @@
     </div>
     <p class="small" id="whoLine" style="margin-top:-8px"></p>
 
-    <div id="alertStrip"></div>
-    <div class="stats" id="statStrip"></div>
+    <div class="rowbtns" style="margin-bottom:16px">
+      <button class="btn primary" data-atab="gyms" id="tabBtnGyms">Saare Gyms</button>
+      <button class="btn" data-atab="new" id="tabBtnNew">+ Naya Gym Banao</button>
+    </div>
 
+    <div id="tabGyms">
+      <div id="alertStrip"></div>
+      <div class="stats" id="statStrip"></div>
+      <h2 style="font-size:22px;margin:16px 0 10px">Saare gyms</h2>
+      <div id="gymList"><div class="empty">Loading...</div></div>
+    </div>
+
+    <div id="tabNew" hidden>
     <div class="card">
-      <h2 style="font-size:22px">Naya demo gym (7-day trial)</h2>
+      <h2 style="font-size:22px">Naya gym — trial ya seedha paid</h2>
       <form id="demoForm" autocomplete="off">
         <label>Gym ka naam<input name="gymName" required placeholder="e.g. Power House Gym"></label>
         <label>Owner ka email<input name="email" type="email" required placeholder="owner@example.com"></label>
@@ -89,14 +99,22 @@
           <span style="display:flex;gap:8px"><input name="password" id="demoPw" required minlength="6" placeholder="Login password">
           <button type="button" class="btn small" data-aact="genPw">Generate</button></span>
         </label>
-        <button class="btn primary wide">Demo gym banao</button>
+        <label>Plan chunno
+          <select name="plan">
+            <option value="trial">Trial — 7 din FREE</option>
+            <option value="monthly">Monthly — 30 din (paid)</option>
+            <option value="quarterly">3 Months (paid)</option>
+            <option value="half">6 Months (paid)</option>
+            <option value="yearly">Yearly (paid)</option>
+            <option value="lifetime">Lifetime (paid)</option>
+          </select>
+        </label>
+        <button class="btn primary wide">Gym banao</button>
         <p id="demoMsg" role="alert"></p>
       </form>
       <div id="demoResult" hidden></div>
     </div>
-
-    <h2 style="font-size:22px;margin:16px 0 10px">Saare gyms</h2>
-    <div id="gymList"><div class="empty">Loading...</div></div>
+    </div>
   </div>
 
 </div>

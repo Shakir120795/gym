@@ -17,7 +17,13 @@
  *   extend      { gymId, days=7 }    -> trial, ends today+days (from the
  *                                       later of today / current end date)
  *   lock        { gymId }            -> trial ended yesterday = locked now
- *   createDemo  { gymName, email, password } -> new login + 7-day trial
+ *   createDemo  { gymName, email, password, plan } -> naya gym + login.
+ *                                       plan 'trial' (default) = 7-day
+ *                                       trial; warna seedha paid plan
+ *                                       (monthly/quarterly/half/yearly/
+ *                                       lifetime) — bina trial ke start.
+ *   setPlan     { gymId, plan }      -> plan BADLO: aaj se fresh plan,
+ *                                       purani bachi duration khatam
  *   addUser     { gymId, email, password } -> existing gym ke liye naya
  *                                       login (access wapas dena / dusra
  *                                       staff login). License nahi badalta.
@@ -115,6 +121,19 @@ Deno.serve(async req => {
       return json({ ok: true, gymId: gid, ...patch });
     }
 
+    if (action === 'setPlan') {
+      // Plan BADLO: aaj se fresh plan — purani bachi duration khatam.
+      const gid = String(body.gymId || '');
+      if (!gid) return json({ error: 'gymId missing' }, 400);
+      const p = PLANS[body.plan];
+      if (!p) return json({ error: 'Unknown plan: ' + body.plan }, 400);
+      const ends = p[1] ? isoDate(addDays(todayD(), p[1])) : null;
+      const patch = { status: 'active', plan: p[0], plan_ends: ends, trial_ends: null };
+      const up = await admin.from('licenses').upsert({ gym_id: gid, ...patch }, { onConflict: 'gym_id' });
+      if (up.error) return json({ error: up.error.message }, 500);
+      return json({ ok: true, gymId: gid, ...patch });
+    }
+
     if (action === 'extend' || action === 'lock') {
       const gid = String(body.gymId || '');
       if (!gid) return json({ error: 'gymId missing' }, 400);
@@ -137,6 +156,8 @@ Deno.serve(async req => {
       const email = String(body.email || '').trim();
       const password = String(body.password || '');
       if (!gymName || !email || password.length < 6) return json({ error: 'Gym name, email aur kam se kam 6 character ka password chahiye' }, 400);
+      const planKey = String(body.plan || 'trial');
+      if (planKey !== 'trial' && !PLANS[planKey]) return json({ error: 'Unknown plan: ' + planKey }, 400);
       let gid = slug(gymName) || 'gym-demo';
       const existing = await admin.from('licenses').select('gym_id');
       const taken = new Set((existing.data || []).map(r => r.gym_id));
@@ -146,14 +167,25 @@ Deno.serve(async req => {
         user_metadata: { gym_id: gid },
       });
       if (created.error) return json({ error: created.error.message }, 400);
-      const ends = isoDate(addDays(todayD(), 7));
-      const lic = await admin.from('licenses').upsert(
-        { gym_id: gid, status: 'trial', trial_ends: ends, plan: 'Trial', plan_ends: null }, { onConflict: 'gym_id' });
+      let licRow, ends;
+      if (planKey === 'trial') {
+        ends = isoDate(addDays(todayD(), 7));
+        licRow = { gym_id: gid, status: 'trial', trial_ends: ends, plan: 'Trial', plan_ends: null };
+      } else {
+        const p = PLANS[planKey];
+        ends = p[1] ? isoDate(addDays(todayD(), p[1])) : null;
+        licRow = { gym_id: gid, status: 'active', trial_ends: null, plan: p[0], plan_ends: ends };
+      }
+      const lic = await admin.from('licenses').upsert(licRow, { onConflict: 'gym_id' });
       if (lic.error) {
         await admin.auth.admin.deleteUser(created.data.user.id);
         return json({ error: 'License nahi bana: ' + lic.error.message }, 500);
       }
-      return json({ ok: true, gymId: gid, email, trialEnds: ends });
+      // Gym ka naam pehle din se save — panel aur app dono me sahi dikhega.
+      await admin.from('records').upsert(
+        { gym_id: gid, kind: 'cfg', id: 'main', data: { gym: { name: gymName, phone: '' }, plans: [] }, deleted: false, updated_at: new Date().toISOString() },
+        { onConflict: 'gym_id,kind,id' });
+      return json({ ok: true, gymId: gid, email, plan: licRow.plan, trialEnds: licRow.trial_ends, planEnds: licRow.plan_ends });
     }
 
     if (action === 'addUser') {
