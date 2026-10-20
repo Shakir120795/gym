@@ -56,10 +56,15 @@ async function call(action, payload) {
 }
 
 /* ---------- status ---------- */
+const PLAN_BTNS = [['monthly', 'Monthly · 30 din', 30], ['quarterly', '3 Months', 90], ['half', '6 Months', 180], ['yearly', 'Yearly', 365], ['lifetime', 'Lifetime', null]];
+const daysTo = s => Math.round((parseD(s) - parseD(todayStr())) / 864e5);
 function statusOf(g) {
-  if (g.status === 'active') return { key: 'active', label: 'Active' };
+  if (g.status === 'active') {
+    if (g.planEnds && daysTo(g.planEnds) < 0) return { key: 'locked', label: 'Locked · plan over' };
+    return { key: 'active', label: 'Active' };
+  }
   if (g.status !== 'trial' || !g.trialEnds) return { key: 'none', label: 'No license' };
-  const left = Math.round((parseD(g.trialEnds) - parseD(todayStr())) / 864e5);
+  const left = daysTo(g.trialEnds);
   if (left < 0) return { key: 'locked', label: 'Locked' };
   if (left === 0) return { key: 'trial', label: 'Trial · aaj last day' };
   return { key: 'trial', label: `Trial · ${left} din left` };
@@ -82,13 +87,22 @@ function gymCard(g) {
         <button class="btn small danger" data-aact="delUser" data-u="${u.id}" data-e="${esc(u.email)}">Access band karo</button>
       </span></div>`).join('')
     : '<p class="small" style="margin-top:8px">Is gym ka koi login nahi hai.</p>';
+  const isLifetime = g.status === 'active' && !g.planEnds;
+  const planLine = g.status === 'active'
+    ? `<p class="small" style="margin:8px 0 0">Plan: <b style="color:var(--gold2)">${esc(g.plan || 'Lifetime')}</b>${g.planEnds ? ` · khatam: ${fmtDate(g.planEnds)} (${daysTo(g.planEnds)} din)` : ''}</p>`
+    : (g.status === 'trial' && g.trialEnds ? `<p class="small" style="margin:8px 0 0">Plan: <b style="color:var(--gold2)">Trial</b> · khatam: ${fmtDate(g.trialEnds)}</p>` : '');
+  const upgradeRow = isLifetime ? '' : `
+    <p class="small" style="margin:12px 0 0">Payment aane par plan do / renew karo:</p>
+    <div class="rowbtns" style="margin-top:6px">
+      ${PLAN_BTNS.map(([k, l]) => `<button class="btn small${k === 'lifetime' ? '' : ' primary'}" data-aact="upgrade" data-plan="${k}" data-g="${esc(g.gymId)}">${l}</button>`).join('')}
+    </div>`;
   return `<div class="card">
     <div class="gym-head"><div><b>${esc(g.name || g.gymId)}</b><br><span class="small">${esc(g.gymId)} · ${g.members} members · last active: ${last}</span></div>
       <span class="pill ${s.key}">${s.label}</span></div>
-    ${g.status === 'trial' && g.trialEnds ? `<p class="small" style="margin:8px 0 0">Trial ends: ${fmtDate(g.trialEnds)}</p>` : ''}
+    ${planLine}
+    ${upgradeRow}
     <div class="rowbtns">
-      ${s.key !== 'active' ? `<button class="btn small primary" data-aact="activate" data-g="${esc(g.gymId)}">Activate (paid)</button>` : ''}
-      <button class="btn small" data-aact="extend" data-g="${esc(g.gymId)}">+7 din trial</button>
+      ${g.status === 'trial' ? `<button class="btn small" data-aact="extend" data-g="${esc(g.gymId)}">+7 din trial</button>` : ''}
       ${s.key !== 'locked' ? `<button class="btn small danger" data-aact="lock" data-g="${esc(g.gymId)}">Abhi lock karo</button>` : ''}
     </div>
     ${users}
@@ -107,9 +121,17 @@ async function loadGyms() {
 
 /* ---------- actions ---------- */
 async function gymAction(act, gid) {
-  const labels = { activate: 'Activate kar dun? Gym lifetime unlock ho jayega.', lock: 'Lock kar dun? Gym owner app nahi khol payega.', extend: 'Trial 7 din badha dun?' };
+  const labels = { lock: 'Lock kar dun? Gym owner app nahi khol payega.', extend: 'Trial 7 din badha dun?' };
   if (!confirm(labels[act] || 'Pakka?')) return;
   try { await call(act, { gymId: gid }); await loadGyms(); }
+  catch (e) { alert(e.message); }
+}
+async function upgradeAction(gid, planKey) {
+  const p = PLAN_BTNS.find(x => x[0] === planKey);
+  const label = p ? p[0] === 'lifetime' ? 'Lifetime' : p[1].split(' ·')[0] : planKey;
+  const days = p ? p[2] : null;
+  if (!confirm(`${gid} ko ${label} plan dun? ${days ? days + ' din chalega (plan khatam hote hi app khud lock ho jayegi).' : 'Ye kabhi expire nahi hoga.'}`)) return;
+  try { await call('upgrade', { gymId: gid, plan: planKey }); await loadGyms(); }
   catch (e) { alert(e.message); }
 }
 document.addEventListener('click', async e => {
@@ -119,7 +141,8 @@ document.addEventListener('click', async e => {
   if (act === 'refresh') { try { await loadGyms(); } catch (err) { alert(err.message); } }
   else if (act === 'logout') logout();
   else if (act === 'genPw') { $('#demoPw').value = 'Gym@' + Math.floor(100000 + Math.random() * 900000); }
-  else if (act === 'activate' || act === 'extend' || act === 'lock') gymAction(act, b.dataset.g);
+  else if (act === 'upgrade') upgradeAction(b.dataset.g, b.dataset.plan);
+  else if (act === 'extend' || act === 'lock') gymAction(act, b.dataset.g);
   else if (act === 'setPw') {
     const pw = prompt(`${b.dataset.e} ke liye naya password likho (kam se kam 6 character):`);
     if (!pw) return;

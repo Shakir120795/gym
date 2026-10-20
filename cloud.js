@@ -83,16 +83,23 @@
     if (serverDate) { const d = new Date(serverDate); if (!isNaN(d)) return d.toISOString().slice(0, 10); }
     return today();
   }
+  function dayDiff(ends) { return Math.round((new Date(ends + 'T00:00:00Z') - new Date(serverToday() + 'T00:00:00Z')) / 864e5); }
   function licenseInfo() {
-    if (!license) return { status: 'none', locked: false, daysLeft: null, ends: '' };
-    if (license.status === 'active') return { status: 'active', locked: false, daysLeft: null, ends: '' };
+    if (!license) return { status: 'none', locked: false, kind: '', daysLeft: null, ends: '', plan: '' };
+    const plan = license.plan || '';
+    if (license.status === 'active') {
+      const ends = license.plan_ends || '';
+      if (!ends) return { status: 'active', locked: false, kind: '', daysLeft: null, ends: '', plan: plan || 'Lifetime' };
+      const left = dayDiff(ends);
+      return { status: 'active', locked: left < 0, kind: left < 0 ? 'plan' : '', daysLeft: Math.max(left, 0), ends, plan };
+    }
     const ends = license.trial_ends || '';
-    const left = ends ? Math.round((new Date(ends + 'T00:00:00Z') - new Date(serverToday() + 'T00:00:00Z')) / 864e5) : 0;
-    return { status: 'trial', locked: left < 0, daysLeft: Math.max(left, 0), ends };
+    const left = ends ? dayDiff(ends) : 0;
+    return { status: 'trial', locked: left < 0, kind: left < 0 ? 'trial' : '', daysLeft: Math.max(left, 0), ends, plan: plan || 'Trial' };
   }
   async function fetchLicense() {
     try {
-      const rows = await api('GET', `/rest/v1/licenses?select=status,trial_ends&gym_id=eq.${encodeURIComponent(gymId())}&limit=1`);
+      const rows = await api('GET', `/rest/v1/licenses?select=status,trial_ends,plan,plan_ends&gym_id=eq.${encodeURIComponent(gymId())}&limit=1`);
       license = (rows && rows[0]) || null;
     } catch (e) { /* failed check never locks the app */ }
     licCheckedAt = Date.now();
@@ -100,10 +107,20 @@
   }
   function showLock() {
     const b = q('#lockblock'); if (!b) return;
+    const info = licenseInfo();
+    const title = q('#lockTitle'), msg = q('#lockMsg');
+    const planOver = info.kind === 'plan';
+    if (title) title.textContent = planOver ? 'Plan khatam' : 'Demo over';
+    if (msg) msg.textContent = planOver
+      ? 'Aapke gym ka plan khatam ho gaya hai. Renew karne ke liye message karo — payment ke baad app yahin se dobara chalu ho jayega aur aapka saara data safe rahega.'
+      : 'Aapka demo period khatam ho gaya hai. App activate karne ke liye message karo — payment ke baad app yahin se unlock ho jayega aur aapka saara data safe rahega.';
     const wa = q('#lockWa');
     if (wa) {
       const sp = (C.support || '').replace(/\D/g, '');
-      if (sp) wa.href = 'https://wa.me/' + (sp.length === 10 ? '91' + sp : sp) + '?text=' + encodeURIComponent('Mujhe Gym Manager app activate karna hai. Meri gym id: ' + gymId());
+      const text = planOver
+        ? 'Mujhe Gym Manager app ka plan renew karna hai. Meri gym id: ' + gymId()
+        : 'Mujhe Gym Manager app activate karna hai. Meri gym id: ' + gymId();
+      if (sp) wa.href = 'https://wa.me/' + (sp.length === 10 ? '91' + sp : sp) + '?text=' + encodeURIComponent(text);
       wa.hidden = !sp;
     }
     b.hidden = false;

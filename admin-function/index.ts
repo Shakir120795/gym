@@ -9,7 +9,11 @@
  *
  * Actions (POST JSON { action, ... }):
  *   list        -> all gyms: license, name, member count, logins, activity
- *   activate    { gymId }            -> paid: status active, never locks
+ *   upgrade     { gymId, plan }      -> paid plan: monthly/quarterly/half/
+ *                                       yearly (days from today or from the
+ *                                       current plan end, whichever later)
+ *                                       or lifetime. Plan end = auto lock.
+ *   activate    { gymId }            -> same as upgrade to lifetime
  *   extend      { gymId, days=7 }    -> trial, ends today+days (from the
  *                                       later of today / current end date)
  *   lock        { gymId }            -> trial ended yesterday = locked now
@@ -52,11 +56,12 @@ Deno.serve(async req => {
     const action = body.action;
 
     if (action === 'list') {
-      const lic = await admin.from('licenses').select('gym_id,status,trial_ends,created_at').order('created_at');
-      if (lic.error) return json({ error: 'licenses table missing hai — pehle supabase-license.sql chalao. (' + lic.error.message + ')' }, 500);
+      const lic = await admin.from('licenses').select('gym_id,status,trial_ends,plan,plan_ends,created_at').order('created_at');
+      if (lic.error) return json({ error: 'licenses table/columns missing hai — pehle supabase-license.sql aur supabase-plans.sql chalao. (' + lic.error.message + ')' }, 500);
       const usersRes = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
       const byGym = {};
       (usersRes.data ? usersRes.data.users : []).forEach(u => {
+        if (u.app_metadata && u.app_metadata.role === 'admin') return; // super admin gym logins me nahi aata
         const gid = (u.user_metadata && u.user_metadata.gym_id) || 'gym-main';
         (byGym[gid] = byGym[gid] || []).push({ id: u.id, email: u.email, lastSignIn: u.last_sign_in_at || null });
       });
@@ -75,6 +80,8 @@ Deno.serve(async req => {
           name: (cfg.data && cfg.data.data && cfg.data.data.gym && cfg.data.data.gym.name) || '',
           status: row ? row.status : 'none',
           trialEnds: row ? row.trial_ends : null,
+          plan: row ? (row.plan || '') : '',
+          planEnds: row ? row.plan_ends : null,
           members: cnt.count || 0,
           lastActive: last.data ? last.data.updated_at : null,
           users: byGym[gid] || [],
@@ -84,18 +91,38 @@ Deno.serve(async req => {
       return json({ gyms });
     }
 
-    if (action === 'activate' || action === 'extend' || action === 'lock') {
+    const PLANS = { monthly: ['Monthly', 30], quarterly: ['3 Months', 90], half: ['6 Months', 180], yearly: ['Yearly', 365], lifetime: ['Lifetime', null] };
+
+    if (action === 'upgrade' || action === 'activate') {
+      const gid = String(body.gymId || '');
+      if (!gid) return json({ error: 'gymId missing' }, 400);
+      const p = action === 'activate' ? PLANS.lifetime : PLANS[body.plan];
+      if (!p) return json({ error: 'Unknown plan: ' + body.plan }, 400);
+      let ends = null;
+      if (p[1]) {
+        const cur = await admin.from('licenses').select('status,plan_ends').eq('gym_id', gid).maybeSingle();
+        const curEnd = cur.data && cur.data.status === 'active' && cur.data.plan_ends
+          ? new Date(cur.data.plan_ends + 'T00:00:00Z') : null;
+        const base = curEnd && curEnd > todayD() ? curEnd : todayD();
+        ends = isoDate(addDays(base, p[1]));
+      }
+      const patch = { status: 'active', plan: p[0], plan_ends: ends, trial_ends: null };
+      const up = await admin.from('licenses').upsert({ gym_id: gid, ...patch }, { onConflict: 'gym_id' });
+      if (up.error) return json({ error: up.error.message }, 500);
+      return json({ ok: true, gymId: gid, ...patch });
+    }
+
+    if (action === 'extend' || action === 'lock') {
       const gid = String(body.gymId || '');
       if (!gid) return json({ error: 'gymId missing' }, 400);
       let patch;
-      if (action === 'activate') patch = { status: 'active', trial_ends: null };
-      else if (action === 'lock') patch = { status: 'trial', trial_ends: isoDate(addDays(todayD(), -1)) };
+      if (action === 'lock') patch = { status: 'trial', trial_ends: isoDate(addDays(todayD(), -1)), plan: 'Trial', plan_ends: null };
       else {
         const days = Math.max(1, Math.min(90, +body.days || 7));
         const cur = await admin.from('licenses').select('trial_ends').eq('gym_id', gid).maybeSingle();
         const curEnd = cur.data && cur.data.trial_ends ? new Date(cur.data.trial_ends + 'T00:00:00Z') : null;
         const base = curEnd && curEnd > todayD() ? curEnd : todayD();
-        patch = { status: 'trial', trial_ends: isoDate(addDays(base, days)) };
+        patch = { status: 'trial', trial_ends: isoDate(addDays(base, days)), plan: 'Trial', plan_ends: null };
       }
       const up = await admin.from('licenses').upsert({ gym_id: gid, ...patch }, { onConflict: 'gym_id' });
       if (up.error) return json({ error: up.error.message }, 500);
@@ -118,7 +145,7 @@ Deno.serve(async req => {
       if (created.error) return json({ error: created.error.message }, 400);
       const ends = isoDate(addDays(todayD(), 7));
       const lic = await admin.from('licenses').upsert(
-        { gym_id: gid, status: 'trial', trial_ends: ends }, { onConflict: 'gym_id' });
+        { gym_id: gid, status: 'trial', trial_ends: ends, plan: 'Trial', plan_ends: null }, { onConflict: 'gym_id' });
       if (lic.error) {
         await admin.auth.admin.deleteUser(created.data.user.id);
         return json({ error: 'License nahi bana: ' + lic.error.message }, 500);

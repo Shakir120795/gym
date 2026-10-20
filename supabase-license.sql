@@ -15,8 +15,14 @@ create table if not exists public.licenses (
   gym_id text primary key,
   status text not null default 'trial',
   trial_ends date,
+  plan text,
+  plan_ends date,
   created_at timestamptz not null default now()
 );
+
+-- Purani table ho to naye column jod do (plan system ke liye).
+alter table public.licenses add column if not exists plan text;
+alter table public.licenses add column if not exists plan_ends date;
 
 grant select on public.licenses to authenticated;
 
@@ -28,8 +34,8 @@ create policy "read own license" on public.licenses
   using (gym_id = coalesce(auth.jwt() -> 'user_metadata' ->> 'gym_id', 'gym-main'));
 
 -- Pehla (apna) gym hamesha active — kabhi lock nahi hoga.
-insert into public.licenses (gym_id, status, trial_ends)
-values ('gym-main', 'active', null)
+insert into public.licenses (gym_id, status, trial_ends, plan, plan_ends)
+values ('gym-main', 'active', null, 'Lifetime', null)
 on conflict (gym_id) do nothing;
 
 -- ============================================================

@@ -9,10 +9,12 @@ wahi rehti hai, website ke code me kabhi nahi. Panel bina admin login ke
 bekar hai: har request par server check karta hai ki login admin hai ya
 nahi.
 
-## Setup ke 4 step
+## Setup ke 5 step
 
 ### 1. License table (agar pehle nahi chalaya)
 Supabase > SQL Editor me `supabase-license.sql` ek baar Run karo.
+Phir `supabase-plans.sql` bhi Run karo — ye plan system ke column
+(plan, plan_ends) jodta hai.
 
 ### 2. Apna admin account banao
 Supabase > Authentication > Users > **Add user**:
@@ -44,15 +46,26 @@ Browser me `admin.html` kholo, apne admin email/password se login karo.
   ready-made message milega — Copy karke owner ko WhatsApp kar do,
   usme app link + login + demo ki last date sab hoga.
 - **Har gym ke card par:**
-  - **Activate (paid)** — payment aa gaya ho to. Gym lifetime unlock.
-  - **+7 din trial** — demo aur badhana ho (current end date se aage
-    badhta hai, beech me lock ho gaya ho to aaj se 7 din).
+  - **Plan line** — gym ke paas kaunsa plan hai (Trial / Monthly /
+    3 Months / 6 Months / Yearly / Lifetime) aur kab khatam hoga.
+    Plan khatam hote hi app **khud lock** ho jati hai.
+  - **Plan buttons (ek click upgrade/renew)** — payment aane par bas
+    plan ka button dabao: Monthly (30 din), 3 Months, 6 Months,
+    Yearly, Lifetime. Renewal bachi hui duration ke aage se judta
+    hai — owner ka ek din bhi waste nahi hota.
+  - **+7 din trial** — sirf trial gyms ke liye, demo badhana ho to.
   - **Abhi lock karo** — turant band karna ho to.
   - Status pill: Active / Trial · X din left / Locked / No license.
   - Members count aur last active time — kaunsa gym sach me use ho
     raha hai, pata chalta hai.
   - Har login ke saamne **Reset password** (owner bhool gaya ho to)
     aur **Access band karo** (login delete — data safe rehta hai).
+  - Tumhara khud ka admin account is list me **nahi aata** — admin
+    gym ka login nahi hota.
+
+Aage ki planning: abhi payment ke baad plan tum panel se dete ho.
+Baad me Razorpay jodenge — payment hote hi plan khud activate ho
+jayega, panel sirf dekhne ke kaam aayega.
 
 ## Safety notes
 

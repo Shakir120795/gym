@@ -192,9 +192,16 @@ function greeting() {
 }
 function trialBanner() {
   const L = window.cloud && window.cloud.license;
-  if (!L || L.status !== 'trial') return '';
-  const txt = L.daysLeft > 0 ? `Demo version — ${L.daysLeft} day${L.daysLeft === 1 ? '' : 's'} left` : 'Demo version — last day today';
-  return `<div class="tag expiring" style="display:block;text-align:center;padding:9px 12px;margin-bottom:10px;font-size:13px">${txt}. Activate karne ke liye app provider se contact karo.</div>`;
+  if (!L) return '';
+  if (L.status === 'trial') {
+    const txt = L.daysLeft > 0 ? `Demo version — ${L.daysLeft} day${L.daysLeft === 1 ? '' : 's'} left` : 'Demo version — last day today';
+    return `<div class="tag expiring" style="display:block;text-align:center;padding:9px 12px;margin-bottom:10px;font-size:13px">${txt}. Activate karne ke liye app provider se contact karo.</div>`;
+  }
+  if (L.status === 'active' && L.ends && L.daysLeft != null && L.daysLeft <= 30) {
+    const txt = L.daysLeft > 0 ? `${L.plan || 'Plan'} — ${L.daysLeft} din bache hain` : `${L.plan || 'Plan'} — aaj last day hai`;
+    return `<div class="tag expiring" style="display:block;text-align:center;padding:9px 12px;margin-bottom:10px;font-size:13px">${txt}. Renew karne ke liye app provider se contact karo.</div>`;
+  }
+  return '';
 }
 function viewHome() {
   const t = today(), ym = t.slice(0, 7), ms = db.members;
