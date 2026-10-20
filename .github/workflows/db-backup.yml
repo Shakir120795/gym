@@ -32,12 +32,12 @@ jobs:
           PGPASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
           set -o pipefail
-          # GitHub runners cannot reach IPv6 — resolve the DB host to IPv4 first
-          DBIP=$(getent ahostsv4 db.usalkhzjtnkvqdusrauf.supabase.co | awk '{print $1; exit}')
-          echo "DB IPv4: $DBIP"
-          [ -n "$DBIP" ] || { echo "could not resolve IPv4"; exit 1; }
+          # Direct DB host is IPv6-only (unreachable from GitHub runners),
+          # so use Supabase's connection pooler (IPv4) in session mode (port 5432).
+          # Pooler needs the username as postgres.<project-ref>.
           pg_dump --schema=public \
-            -h "$DBIP" -U postgres postgres \
+            -h aws-0-ap-south-1.pooler.supabase.com -p 5432 \
+            -U postgres.usalkhzjtnkvqdusrauf postgres \
             | gzip > "gym-backup-$(date +%F).sql.gz"
           SZ=$(stat -c%s gym-backup-*.sql.gz)
           echo "backup size: $SZ bytes"
