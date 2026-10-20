@@ -343,6 +343,7 @@ function viewAttendance() {
   return seg + `<div class="scanbox"><video id="cam" playsinline muted></video><canvas id="camc" hidden></canvas><div class="frame"></div><div id="scanMsg" class="scanmsg">Camera is off</div></div>
     <div id="scanRes"></div>
     <button class="btn primary wide" style="margin-top:0" data-act="camToggle" id="camBtn">Start camera</button>
+    <button class="btn ghost wide" style="margin-top:8px" data-act="camFlip" id="camFlipBtn">${faceBtnTxt()}</button>
     <p class="sum" id="scanCount" style="margin-top:14px">${countsLine()}</p>
     <p class="mini">Keep this screen open on the gate phone. The camera starts by itself and keeps scanning one member after another. Each member can check in once in the morning and once in the evening.</p>
     ${window.GYM_PREVIEW ? `<hr><label class="mini">Test without camera
@@ -351,18 +352,23 @@ function viewAttendance() {
 }
 
 /* ---------- QR scanner ---------- */
-const scan = { stream: null, timer: 0, last: '', lastAt: 0, hide: 0 };
+const scan = { stream: null, timer: 0, last: '', lastAt: 0, hide: 0, face: 'environment' };
+function faceBtnTxt() { return scan.face === 'user' ? '🔁 Back camera use karo' : '🔁 Front camera use karo'; }
+function setCamFaceUI(v) {
+  if (v) v.style.transform = scan.face === 'user' ? 'scaleX(-1)' : '';
+  const fb = $('#camFlipBtn'); if (fb) fb.textContent = faceBtnTxt();
+}
 const playSafe = v => { const p = v.play(); if (p && p.catch) p.catch(() => {}); };
 async function startCam() {
   if (scan.starting || scan.stream) return;
   if (typeof jsQR === 'undefined') { $('#scanMsg').textContent = 'Scanner library missing'; return; }
   scan.starting = true;
   try {
-    try { scan.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false }); }
+    try { scan.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: scan.face } }, audio: false }); }
     catch (e) { const m = $('#scanMsg'); if (m) m.textContent = 'Camera blocked. Allow camera for this site in browser settings.'; return; }
     const v = $('#cam');
     if (!v || ui.tab !== 'attendance' || ui.attMode !== 'scan') { stopCam(); return; }
-    v.srcObject = scan.stream; playSafe(v);
+    v.srcObject = scan.stream; playSafe(v); setCamFaceUI(v);
     $('#camBtn').textContent = 'Stop camera'; $('#scanMsg').textContent = 'Show your QR inside the box';
     keepAwake(); clearTimeout(scan.timer); tick();
   } finally { scan.starting = false; }
@@ -380,7 +386,7 @@ function resumeCam() {
   if (ui.tab !== 'attendance' || ui.attMode !== 'scan') return;
   const v = $('#cam'); if (!v) return;
   if (scan.stream && scan.stream.getTracks().every(t => t.readyState === 'live')) {
-    v.srcObject = scan.stream; playSafe(v);
+    v.srcObject = scan.stream; playSafe(v); setCamFaceUI(v);
     $('#camBtn').textContent = 'Stop camera'; $('#scanMsg').textContent = 'Show your QR inside the box';
     keepAwake(); clearTimeout(scan.timer); tick();
   } else {
@@ -961,6 +967,12 @@ const actions = {
     }
   },
   camToggle: () => { if (scan.stream) { ui.camWanted = false; stopCam(); $('#camBtn').textContent = 'Start camera'; $('#scanMsg').textContent = 'Camera is off'; } else { ui.camWanted = true; startCam(); } },
+  camFlip: () => {
+    scan.face = scan.face === 'user' ? 'environment' : 'user';
+    setCamFaceUI($('#cam'));
+    if (scan.stream) { stopCam(); startCam(); }
+    else { const m = $('#scanMsg'); if (m) m.textContent = scan.face === 'user' ? 'Front camera selected — Start dabane par front camera khulega' : 'Back camera selected — Start dabane par back camera khulega'; }
+  },
   simScan: () => { const m = getM($('#simSel').value); if (m) { scan.last = ''; onScan(qrPayload(m)); } },
   manual: () => {
     if (!db.gym.pin) { toast('Set an owner PIN in Settings first', true); return settingsSheet(); }
