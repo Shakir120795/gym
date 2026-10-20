@@ -39,3 +39,27 @@ create policy "own gym only" on public.records
   for all to authenticated
   using (gym_id = coalesce(auth.jwt() -> 'user_metadata' ->> 'gym_id', 'gym-main'))
   with check (gym_id = coalesce(auth.jwt() -> 'user_metadata' ->> 'gym_id', 'gym-main'));
+
+-- License / demo lock: one row per gym. The app can only READ its own
+-- gym's row; only the SQL editor (super admin) can create or change rows.
+-- status 'active' = paid (never locks). status 'trial' locks the app the
+-- day after trial_ends. No row = no lock.
+create table if not exists public.licenses (
+  gym_id text primary key,
+  status text not null default 'trial',
+  trial_ends date,
+  created_at timestamptz not null default now()
+);
+
+grant select on public.licenses to authenticated;
+
+alter table public.licenses enable row level security;
+
+drop policy if exists "read own license" on public.licenses;
+create policy "read own license" on public.licenses
+  for select to authenticated
+  using (gym_id = coalesce(auth.jwt() -> 'user_metadata' ->> 'gym_id', 'gym-main'));
+
+insert into public.licenses (gym_id, status, trial_ends)
+values ('gym-main', 'active', null)
+on conflict (gym_id) do nothing;

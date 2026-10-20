@@ -258,6 +258,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 
 /* ---------- offline / setup blocker: covers the whole app ---------- */
 #netblock{position:fixed;inset:0;z-index:95;display:grid;place-items:center;padding:20px;background:var(--bg)}
+#lockblock{position:fixed;inset:0;z-index:96;display:grid;place-items:center;padding:20px;background:var(--bg)}
 .nb-card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:26px 24px;width:100%;max-width:400px;
   box-shadow:0 20px 60px rgba(0,0,0,.5);position:relative;overflow:hidden;text-align:center}
 .nb-card::before{content:"";position:absolute;top:0;left:0;right:0;height:4px;background:var(--grad)}

@@ -190,6 +190,12 @@ function greeting() {
   const h = new Date().getHours();
   return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
 }
+function trialBanner() {
+  const L = window.cloud && window.cloud.license;
+  if (!L || L.status !== 'trial') return '';
+  const txt = L.daysLeft > 0 ? `Demo version — ${L.daysLeft} day${L.daysLeft === 1 ? '' : 's'} left` : 'Demo version — last day today';
+  return `<div class="tag expiring" style="display:block;text-align:center;padding:9px 12px;margin-bottom:10px;font-size:13px">${txt}. Activate karne ke liye app provider se contact karo.</div>`;
+}
 function viewHome() {
   const t = today(), ym = t.slice(0, 7), ms = db.members;
   const active = ms.filter(m => m.expiry >= t).length;
@@ -201,6 +207,7 @@ function viewHome() {
   const stat = (act, extra, cls, icon, val, fmt, label) =>
     `<button class="stat" data-act="${act}" ${extra}><span class="sic ${cls}">${ic(icon, 22)}</span><span><b data-count="${val}"${fmt ? ` data-fmt="${fmt}"` : ''}>${fmt === 'inr' ? inr(val) : val}</b><small>${label}</small></span></button>`;
   return `
+  ${trialBanner()}
   <section class="hero">
     <div class="hero-top"><span>${greeting()}</span><span class="hero-pill">${came} came today</span></div>
     <span class="lbl">Today's collection</span>

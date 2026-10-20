@@ -22,6 +22,7 @@
   let state = 'setup';
   let running = false, rerun = false, deb = 0, lastErr = '';
   let booted = false, starting = false;
+  let license = null, licCheckedAt = 0, serverDate = '';
 
   /* ---------- tiny helpers ---------- */
   function canon(o) {
@@ -51,7 +52,7 @@
     state = s;
     const b = q('#syncBtn'); if (!b) return;
     b.hidden = !enabled;
-    b.textContent = { loading: 'Loading', idle: 'Sync', syncing: 'Syncing', ok: 'Online', offline: 'Offline', error: 'Sync error', login: 'Sign in', setup: 'Setup' }[s] || '';
+    b.textContent = { loading: 'Loading', idle: 'Sync', syncing: 'Syncing', ok: 'Online', offline: 'Offline', error: 'Sync error', login: 'Sign in', setup: 'Setup', locked: 'Locked' }[s] || '';
     b.className = 'sync ' + s;
   }
   function statusText() {
@@ -69,6 +70,45 @@
     wr(AUTH, session);
   }
   function gymId() { return (session && session.gymId) || 'gym-main'; }
+
+  /* ---------- license / demo lock ----------
+     One row per gym in the `licenses` table. The app can only READ its own
+     gym's row (RLS); rows are created/changed only from the Supabase SQL
+     editor by the super admin. status 'active' = paid, never locks.
+     status 'trial' locks the day after trial_ends. No row (or the table
+     missing) = no lock, so a setup miss can never lock a paying gym out.
+     The date is compared against the SERVER date (Date response header),
+     not the phone clock. */
+  function serverToday() {
+    if (serverDate) { const d = new Date(serverDate); if (!isNaN(d)) return d.toISOString().slice(0, 10); }
+    return today();
+  }
+  function licenseInfo() {
+    if (!license) return { status: 'none', locked: false, daysLeft: null, ends: '' };
+    if (license.status === 'active') return { status: 'active', locked: false, daysLeft: null, ends: '' };
+    const ends = license.trial_ends || '';
+    const left = ends ? Math.round((new Date(ends + 'T00:00:00Z') - new Date(serverToday() + 'T00:00:00Z')) / 864e5) : 0;
+    return { status: 'trial', locked: left < 0, daysLeft: Math.max(left, 0), ends };
+  }
+  async function fetchLicense() {
+    try {
+      const rows = await api('GET', `/rest/v1/licenses?select=status,trial_ends&gym_id=eq.${encodeURIComponent(gymId())}&limit=1`);
+      license = (rows && rows[0]) || null;
+    } catch (e) { /* failed check never locks the app */ }
+    licCheckedAt = Date.now();
+    return licenseInfo();
+  }
+  function showLock() {
+    const b = q('#lockblock'); if (!b) return;
+    const wa = q('#lockWa');
+    if (wa) {
+      const sp = (C.support || '').replace(/\D/g, '');
+      if (sp) wa.href = 'https://wa.me/' + (sp.length === 10 ? '91' + sp : sp) + '?text=' + encodeURIComponent('Mujhe Gym Manager app activate karna hai. Meri gym id: ' + gymId());
+      wa.hidden = !sp;
+    }
+    b.hidden = false;
+  }
+  function hideLock() { const b = q('#lockblock'); if (b) b.hidden = true; }
   function requireLogin() {
     session = null; try { localStorage.removeItem(AUTH); } catch (e) {}
     hideBlock(); showLogin();
@@ -82,6 +122,7 @@
   async function api(method, path, body, extra) {
     await ensureToken();
     const res = await fetch(root + path, { method, headers: Object.assign({ apikey: C.key, Authorization: 'Bearer ' + session.access, 'Content-Type': 'application/json' }, extra || {}), body: body ? JSON.stringify(body) : undefined });
+    if (res.headers && res.headers.get) { const dh = res.headers.get('date'); if (dh) serverDate = dh; }
     if (res.status === 401) { requireLogin(); throw new Error('auth'); }
     const t = await res.text();
     if (!res.ok) throw new Error(t.slice(0, 200) || 'Request failed');
@@ -193,6 +234,10 @@
       rows.forEach(r => { const t = new Date(r.updated_at).getTime(); if (t > mx) mx = t; });
       if (mx) meta.lastPull = new Date(mx).toISOString();
       setState('ok'); hideBlock();
+      if (Date.now() - licCheckedAt > 60000) {
+        const li = await fetchLicense();
+        if (li.locked) { booted = false; setState('locked'); showLock(); return; }
+      }
       if (changed && window.refreshLive) refreshLive();
     } catch (e) {
       if (e.message === 'auth') { /* login screen already shown */ }
@@ -245,6 +290,8 @@
         if (e.message === 'auth') { requireLogin(); return; }
         goOffline(); return;
       }
+      const li = await fetchLicense();
+      if (li.locked) { booted = false; setState('locked'); showLock(); return; }
       booted = true; setState('ok'); render();
     } finally { starting = false; }
   }
@@ -269,6 +316,10 @@
     });
     const rb = q('#netRetry');
     if (rb) rb.addEventListener('click', retry);
+    const lr = q('#lockRetry');
+    if (lr) lr.addEventListener('click', () => { hideLock(); start(); });
+    const lo = q('#lockLogout');
+    if (lo) lo.addEventListener('click', () => { hideLock(); logout(); });
     window.addEventListener('online', () => { if (!session) return; if (!booted) start(); else sync(); });
     window.addEventListener('offline', () => { if (session) goOffline('Connection chali gayi hai. Wapas aane ka wait karo ya Retry dabao.'); });
     document.addEventListener('visibilitychange', () => { if (!document.hidden && session && booted) sync(); });
@@ -277,6 +328,6 @@
     if (!session) showLogin(); else start();
   }
 
-  window.cloud = { enabled, sync, touch, logout, statusText, retry, init, get state() { return state; }, get booted() { return booted; }, get gymId() { return gymId(); } };
+  window.cloud = { enabled, sync, touch, logout, statusText, retry, init, get state() { return state; }, get booted() { return booted; }, get gymId() { return gymId(); }, get license() { return licenseInfo(); } };
   init();
 })();
