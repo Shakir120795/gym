@@ -10,7 +10,7 @@
 #   2. Done. Every night at 00:00 IST a full backup (every gym_id) is dumped and emailed.
 #      Manual run any time: Actions tab -> "Daily DB backup" -> Run workflow.
 #
-# No third-party actions used — only Ubuntu + pg_dump + Python stdlib.
+# No third-party actions used — official PostgreSQL 17 image + Python stdlib.
 # The DB password never appears in logs or the repo.
 
 name: Daily DB backup
@@ -24,9 +24,6 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      - name: Install pg_dump
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
-
       - name: Dump database (all gyms)
         env:
           PGPASSWORD: ${{ secrets.DB_PASSWORD }}
@@ -35,7 +32,12 @@ jobs:
           # Direct DB host is IPv6-only (unreachable from GitHub runners),
           # so use Supabase's connection pooler (IPv4) in session mode (port 5432).
           # Pooler needs the username as postgres.<project-ref>.
-          pg_dump --schema=public \
+          # Supabase runs PostgreSQL 17, so run pg_dump from the matching
+          # PostgreSQL 17 image (the runner's bundled client is older).
+          docker run --rm \
+            -e PGPASSWORD \
+            postgres:17-alpine \
+            pg_dump --schema=public \
             -h aws-0-ap-south-1.pooler.supabase.com -p 5432 \
             -U postgres.usalkhzjtnkvqdusrauf postgres \
             | gzip > "gym-backup-$(date +%F).sql.gz"
