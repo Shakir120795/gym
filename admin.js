@@ -77,6 +77,23 @@ function renderStats() {
   $('#statStrip').innerHTML = [['Total gyms', n.all], ['Active (paid)', n.active], ['Trial par', n.trial], ['Locked', n.locked]]
     .map(([l, v]) => `<div class="stat"><b>${v}</b><small>${l}</small></div>`).join('');
 }
+function renderAlerts() {
+  const box = $('#alertStrip');
+  if (!box) return;
+  const locked = [], soon = [];
+  gyms.forEach(g => {
+    const s = statusOf(g);
+    if (s.key === 'locked') locked.push(g.name || g.gymId);
+    else {
+      const ends = g.status === 'trial' ? g.trialEnds : g.planEnds;
+      if (ends && daysTo(ends) >= 0 && daysTo(ends) <= 3) soon.push(`${g.name || g.gymId} (${daysTo(ends) === 0 ? 'aaj last day' : daysTo(ends) + ' din'})`);
+    }
+  });
+  let h = '';
+  if (locked.length) h += `<div class="alertbox bad">⚠ In gyms ka access <b>BAND</b> hai (plan/trial khatam): <b>${locked.map(esc).join(', ')}</b> — payment lekar neeche plan button se dobara chalu karo.</div>`;
+  if (soon.length) h += `<div class="alertbox warn">⏳ Ye gyms 3 din ke andar band hone wale hain: <b>${soon.map(esc).join(', ')}</b> — owner ko pehle hi WhatsApp par renew reminder bhej do.</div>`;
+  box.innerHTML = h;
+}
 function gymCard(g) {
   const s = statusOf(g);
   const last = g.lastActive ? new Date(g.lastActive).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : 'kabhi nahi';
@@ -106,9 +123,18 @@ function gymCard(g) {
       ${s.key !== 'locked' ? `<button class="btn small danger" data-aact="lock" data-g="${esc(g.gymId)}">Abhi lock karo</button>` : ''}
     </div>
     ${users}
+    <div style="margin-top:12px;border-top:1px dashed var(--line);padding-top:10px">
+      <p class="small" style="margin:0 0 6px">Is gym ke liye naya login banao — purana login band ho gaya ho to yahi se access wapas milta hai (data aur plan pehle jaisa rahega):</p>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <input id="nu-e-${esc(g.gymId)}" type="email" placeholder="Email" style="flex:1;min-width:150px">
+        <input id="nu-p-${esc(g.gymId)}" type="text" placeholder="Password (6+)" style="flex:1;min-width:110px">
+        <button class="btn small primary" data-aact="addUser" data-g="${esc(g.gymId)}">Login banao</button>
+      </div>
+    </div>
   </div>`;
 }
 function render() {
+  renderAlerts();
   renderStats();
   $('#gymList').innerHTML = gyms.length ? gyms.map(gymCard).join('') : '<div class="empty">Abhi koi gym nahi hai. Pehla demo upar se banao.</div>';
 }
@@ -143,13 +169,27 @@ document.addEventListener('click', async e => {
   else if (act === 'genPw') { $('#demoPw').value = 'Gym@' + Math.floor(100000 + Math.random() * 900000); }
   else if (act === 'upgrade') upgradeAction(b.dataset.g, b.dataset.plan);
   else if (act === 'extend' || act === 'lock') gymAction(act, b.dataset.g);
-  else if (act === 'setPw') {
+  else if (act === 'addUser') {
+    const gid = b.dataset.g;
+    const email = (($('#nu-e-' + gid) || {}).value || '').trim();
+    const pw = ($('#nu-p-' + gid) || {}).value || '';
+    if (!email.includes('@')) { alert('Sahi email likho'); return; }
+    if (pw.length < 6) { alert('Password kam se kam 6 character ka rakho'); return; }
+    try {
+      await call('addUser', { gymId: gid, email, password: pw });
+      alert(`Login ban gaya!\nEmail: ${email}\nPassword: ${pw}\nYe owner ko bhej do — purana saara data waisa ka waisa milega.`);
+      await loadGyms();
+    } catch (err) { alert(err.message); }
+  } else if (act === 'setPw') {
     const pw = prompt(`${b.dataset.e} ke liye naya password likho (kam se kam 6 character):`);
     if (!pw) return;
     try { await call('setPassword', { userId: b.dataset.u, password: pw }); alert('Password badal gaya. Owner ko naya password bata do.'); }
     catch (err) { alert(err.message); }
   } else if (act === 'delUser') {
-    if (!confirm(`${b.dataset.e} ka access band kar dun? Ye login delete ho jayega, gym ka data safe rahega.`)) return;
+    const gym = gyms.find(g => g.users.some(u => u.id === b.dataset.u));
+    const lastOne = gym && gym.users.length === 1;
+    const warn = lastOne ? '\n\nDHYAN DO: ye is gym ka AKHIRI login hai — band karne ke baad app me koi login nahi kar payega. Naya login card ke neeche wale form se banana padega (data safe rahega).' : '';
+    if (!confirm(`${b.dataset.e} ka access band kar dun? Ye login delete ho jayega, gym ka data safe rahega.${warn}`)) return;
     try { await call('deleteUser', { userId: b.dataset.u }); await loadGyms(); }
     catch (err) { alert(err.message); }
   } else if (act === 'copyDemo') {

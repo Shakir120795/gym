@@ -18,6 +18,9 @@
  *                                       later of today / current end date)
  *   lock        { gymId }            -> trial ended yesterday = locked now
  *   createDemo  { gymName, email, password } -> new login + 7-day trial
+ *   addUser     { gymId, email, password } -> existing gym ke liye naya
+ *                                       login (access wapas dena / dusra
+ *                                       staff login). License nahi badalta.
  *   setPassword { userId, password } -> change a gym login's password
  *   deleteUser  { userId }           -> remove a login (access revoked)
  */
@@ -151,6 +154,19 @@ Deno.serve(async req => {
         return json({ error: 'License nahi bana: ' + lic.error.message }, 500);
       }
       return json({ ok: true, gymId: gid, email, trialEnds: ends });
+    }
+
+    if (action === 'addUser') {
+      const gid = String(body.gymId || '');
+      const email = String(body.email || '').trim();
+      const password = String(body.password || '');
+      if (!gid || !email || password.length < 6) return json({ error: 'gymId, email aur 6+ character password chahiye' }, 400);
+      const created = await admin.auth.admin.createUser({
+        email, password, email_confirm: true,
+        user_metadata: { gym_id: gid },
+      });
+      if (created.error) return json({ error: created.error.message }, 400);
+      return json({ ok: true, gymId: gid, email });
     }
 
     if (action === 'setPassword') {

@@ -60,8 +60,17 @@ Browser me `admin.html` kholo, apne admin email/password se login karo.
     raha hai, pata chalta hai.
   - Har login ke saamne **Reset password** (owner bhool gaya ho to)
     aur **Access band karo** (login delete — data safe rehta hai).
+    Aakhri login band karne par panel pehle khaas warning deta hai.
+  - **Login banao (har card ke neeche)** — kisi gym ka login delete
+    ho jaye ya dusra staff login chahiye ho to yahi se naya login
+    banta hai. Gym ka data aur plan bilkul nahi badalta — sirf nayi
+    chaabi banti hai.
   - Tumhara khud ka admin account is list me **nahi aata** — admin
     gym ka login nahi hota.
+- **Upar alert strip:** jo gyms band ho chuke hain (plan/trial
+  khatam) unke naam laal box me, aur jo 3 din ke andar band hone
+  wale hain unke naam pehle se dikhte hain — taaki owner ko time par
+  renew reminder bhej sako.
 
 Aage ki planning: abhi payment ke baad plan tum panel se dete ho.
 Baad me Razorpay jodenge — payment hote hi plan khud activate ho

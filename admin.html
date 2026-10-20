@@ -45,6 +45,9 @@
   #msg,#demoMsg{color:#F08A84;font-weight:600;min-height:1.3em;margin-top:10px}
   #demoResult{background:var(--card2);border:1px dashed var(--gold);border-radius:10px;padding:12px;margin-top:12px;white-space:pre-wrap;word-break:break-word;font-size:14px}
   .empty{color:var(--mute);text-align:center;padding:26px 10px}
+  .alertbox{border-radius:var(--r);padding:13px 16px;margin-bottom:12px;font-size:15px}
+  .alertbox.bad{background:rgba(228,87,79,.14);border:1px solid var(--red)}
+  .alertbox.warn{background:rgba(232,184,75,.12);border:1px solid var(--gold)}
   @media(max-width:560px){.stats{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
@@ -74,6 +77,7 @@
     </div>
     <p class="small" id="whoLine" style="margin-top:-8px"></p>
 
+    <div id="alertStrip"></div>
     <div class="stats" id="statStrip"></div>
 
     <div class="card">
