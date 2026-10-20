@@ -8,5 +8,5 @@ window.GYM_CLOUD = {
   /* Super admin (shakir) ka WhatsApp number — demo lock screen par
      "activate karo" button ke liye. 10 digit number dalo; khali rakha
      to button nahi dikhega. */
-  support: ''
+  support: '8077372462'
 };
