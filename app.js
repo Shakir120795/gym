@@ -731,6 +731,24 @@ function membersRows() {
   return rows;
 }
 function exportMembers() { download(`gym-members-${today()}.csv`, csv(membersRows())); }
+/* Settings > Backup: restore — file padho, summary dikhao, confirm par lagao */
+let pendingRestore = null;
+function readBackupFile(f) {
+  const done = txt => {
+    let p; try { p = JSON.parse(txt); } catch (e) { return toast('Ye sahi backup file nahi hai', true); }
+    const d = p && p.data ? p.data : p;
+    if (!d || !Array.isArray(d.members) || !Array.isArray(d.payments)) return toast('Ye sahi backup file nahi hai', true);
+    pendingRestore = d;
+    openSheet('Restore backup?', `
+      <p style="margin:0 0 6px">Backup file me hai:</p>
+      <p class="mini" style="margin:0 0 10px">Gym: <b>${esc((d.gym && d.gym.name) || '-')}</b> · Members: <b>${d.members.length}</b> · Payments: <b>${d.payments.length}</b>${p.exportedAt ? `<br>Backup ki date: ${esc(String(p.exportedAt).slice(0, 10))}` : ''}</p>
+      <p style="margin:0 0 6px">Abhi ke data me hai: <b>${db.members.length}</b> members · <b>${db.payments.length}</b> payments</p>
+      <p class="mini" style="margin:0 0 6px;color:var(--red)">Restore karne par abhi wala data is backup se BADAL jayega. Ye kadam wapas nahi hoga.</p>
+      <div class="actions"><button class="btn danger" data-act="doRestore">Haan, restore karo</button><button class="btn ghost" data-act="closeSheet">Cancel</button></div>`);
+  };
+  if (f.text) f.text().then(done).catch(() => toast('File padh nahi paya', true));
+  else { const r = new FileReader(); r.onload = () => done(r.result); r.onerror = () => toast('File padh nahi paya', true); r.readAsText(f); }
+}
 function paymentsRows(from, to) {
   const ps = db.payments.filter(p => p.date >= from && p.date <= to).slice().sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const rows = [['Date', 'Member', 'Amount', 'Mode', 'Type']];
@@ -953,7 +971,12 @@ function settingsSheet() {
       <h3 style="font-size:20px;margin:4px 0 8px">Data backup</h3>
       <p class="mini" style="margin:0 0 10px">Poora gym data ek hi file me — members, payments, attendance, plans aur settings sab. File ko apne paas safe rakho; kabhi data kharab ho jaye to isi file se wapas la sakte hain.</p>
       <p class="mini" style="margin:0 0 10px">Is samay: <b>${db.members.length}</b> members · <b>${db.payments.length}</b> payments</p>
-      <button class="btn primary wide" data-act="dlBackup">Download full backup (All data)</button>`)}
+      <button class="btn primary wide" data-act="dlBackup">Download full backup (All data)</button>
+      <hr>
+      <h3 style="font-size:20px;margin:0 0 8px">Restore backup</h3>
+      <p class="mini" style="margin:0 0 10px">Purani backup file se data wapas lao. <b>Dhyan do:</b> restore karne par abhi wala data backup file wale data se badal jayega — pehle upar se current data ka backup le lena sahi rahega.</p>
+      <input type="file" id="backupFile" accept=".json,application/json" hidden>
+      <button class="btn ghost wide" data-act="pickBackup">Backup file chuno (Restore)</button>`)}
     ${panel('privacy', `
       <h3 style="font-size:20px;margin:4px 0 8px">Privacy</h3>
       <p class="mini" style="margin:0 0 8px"><b>Tumhara data, tumhara hai.</b> Gym ka data (members, payments, attendance) secure cloud me save hota hai, taaki phone badalne ya kharab hone par bhi data na khoye.</p>
@@ -1116,6 +1139,14 @@ const actions = {
     document.querySelectorAll('#sheetBody [data-act="setTab"]').forEach(x => x.classList.toggle('on', x.dataset.k === ui.setTab));
   },
   doExport,
+  pickBackup: () => { const i = $('#backupFile'); if (i) { i.value = ''; i.click(); } },
+  doRestore: () => {
+    if (!pendingRestore) return;
+    const d = pendingRestore; pendingRestore = null;
+    db = { gym: d.gym || db.gym, plans: (d.plans && d.plans.length) ? d.plans : db.plans, members: d.members || [], payments: d.payments || [], attendance: d.attendance || {}, checkins: d.checkins || {}, seq: d.seq || 1 };
+    save(); closeSheet(); render();
+    toast(`Backup restore ho gaya — ${db.members.length} members wapas aa gaye`);
+  },
   logout: () => { if (confirm('Log out from this phone?')) { closeSheet(); cloud.logout(); } },
   dlBackup: () => {
     const payload = { app: 'gym-manager', gymId: (window.cloud && cloud.gymId) || 'gym-main', exportedAt: new Date().toISOString(), data: db };
@@ -1183,6 +1214,7 @@ document.addEventListener('change', e => {
   else if (t.id === 'repDate') { ui.repDate = t.value || ui.repDate; render(); }
   else if (t.id === 'repMonth') { ui.repMonth = t.value || ui.repMonth; render(); }
   else if (t.id === 'expMode') { const m = t.value === 'month'; if ($('#expMonthWrap')) $('#expMonthWrap').hidden = !m; if ($('#expRangeWrap')) $('#expRangeWrap').hidden = m; }
+  else if (t.id === 'backupFile' && t.files && t.files[0]) { readBackupFile(t.files[0]); t.value = ''; }
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeCam(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet(); });
