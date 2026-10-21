@@ -71,7 +71,7 @@ Deno.serve(async req => {
       const byGym = {};
       (usersRes.data ? usersRes.data.users : []).forEach(u => {
         if (u.app_metadata && u.app_metadata.role === 'admin') return; // super admin gym logins me nahi aata
-        const gid = (u.user_metadata && u.user_metadata.gym_id) || 'gym-main';
+        const gid = (u.app_metadata && u.app_metadata.gym_id) || (u.user_metadata && u.user_metadata.gym_id) || 'gym-main';
         (byGym[gid] = byGym[gid] || []).push({ id: u.id, email: u.email, lastSignIn: u.last_sign_in_at || null });
       });
       const ids = new Set([...lic.data.map(r => r.gym_id), ...Object.keys(byGym)]);
@@ -164,7 +164,7 @@ Deno.serve(async req => {
       if (taken.has(gid)) { let i = 2; while (taken.has(gid + '-' + i)) i++; gid = gid + '-' + i; }
       const created = await admin.auth.admin.createUser({
         email, password, email_confirm: true,
-        user_metadata: { gym_id: gid },
+        app_metadata: { gym_id: gid },
       });
       if (created.error) return json({ error: created.error.message }, 400);
       let licRow, ends;
@@ -195,7 +195,7 @@ Deno.serve(async req => {
       if (!gid || !email || password.length < 6) return json({ error: 'gymId, email aur 6+ character password chahiye' }, 400);
       const created = await admin.auth.admin.createUser({
         email, password, email_confirm: true,
-        user_metadata: { gym_id: gid },
+        app_metadata: { gym_id: gid },
       });
       if (created.error) return json({ error: created.error.message }, 400);
       return json({ ok: true, gymId: gid, email });

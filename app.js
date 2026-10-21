@@ -104,8 +104,8 @@ function pay(m, amount, mode, type, date) {
 }
 function phone91(n) { const d = String(n).replace(/\D/g, ''); return d.length === 10 ? '91' + d : d; }
 /* Which gym this login belongs to. The cloud layer reads it from the signed-in
-   user's metadata (set in Supabase > Authentication for each gym's login);
-   'gym-main' is the fallback for the first gym. The database enforces it too
+   user's APP metadata — only the admin can set it (panel/SQL), the login
+   itself cannot change it. The database enforces it too
    (RLS), so one gym can never see another gym's data even if the app is fooled. */
 function gymId() { return (window.cloud && cloud.gymId) || 'gym-main'; }
 function qrPayload(m) { return `GYM:${gymId()}:${m.id}:${m.token}`; }

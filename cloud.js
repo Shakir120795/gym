@@ -66,7 +66,7 @@
     const r = await fetch(`${root}/auth/v1/token?grant_type=${grant}`, { method: 'POST', headers: { apikey: C.key, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw Object.assign(new Error(j.error_description || j.msg || j.message || 'Sign in failed'), { status: r.status });
-    session = { access: j.access_token, refresh: j.refresh_token, exp: Date.now() + (j.expires_in || 3600) * 1000, email: (j.user && j.user.email) || body.email || '', gymId: (j.user && j.user.user_metadata && j.user.user_metadata.gym_id) || '' };
+    session = { access: j.access_token, refresh: j.refresh_token, exp: Date.now() + (j.expires_in || 3600) * 1000, email: (j.user && j.user.email) || body.email || '', gymId: (j.user && j.user.app_metadata && j.user.app_metadata.gym_id) || '' };
     wr(AUTH, session);
   }
   function gymId() { return (session && session.gymId) || ''; }

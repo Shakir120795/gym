@@ -8,8 +8,10 @@ mein store nahi hota, sirf login session rehta hai. Internet nahi = app nahi.
 1. supabase.com par free account banao, "New project" dabao (naam: gym, ek password rakho, region: Mumbai).
 2. Left menu: SQL Editor > New query. `supabase-setup.sql` ka poora text paste karke Run dabao.
 3. Authentication > Users > Add user > Create new user. Gym owner ka email aur password daalo, "Auto Confirm User" ON rakho.
-4. Us user ko kholo > "User Metadata" edit karo aur ye JSON daalo:
-   `{ "gym_id": "gym-main" }`
+4. gym_id hamesha **app_metadata** me rakho (user_metadata me NAHI — wo login
+   wala khud badal sakta hai, app_metadata sirf tum SQL se badal sakte ho).
+   SQL Editor me ye chalao (email gym ke login wala):
+   `update auth.users set raw_app_meta_data = coalesce(raw_app_meta_data,'{}'::jsonb) || '{"gym_id":"gym-main"}'::jsonb where email = 'owner@example.com';`
    (Pehle gym ka id hamesha `gym-main` rakho.)
 5. Authentication > Sign In / Providers mein "Allow new users to sign up" ko OFF kar do, taaki koi aur account na bana sake. **Yahi owner ka control hai:** jiska account hai wahi app khol sakta hai.
 6. Project Settings > API: "Project URL" aur "anon public" key copy karo.
@@ -22,8 +24,8 @@ mein store nahi hota, sirf login session rehta hai. Internet nahi = app nahi.
 Agar database `gym_id` wale update se PEHLE bana tha to ek baar ye chalao:
 
 1. SQL Editor > New query. `supabase-migrate-gymid.sql` ka poora text paste karke Run dabao.
-2. Authentication > Users > gym wale user ko kholo > "User Metadata" mein daalo:
-   `{ "gym_id": "gym-main" }`
+2. Upar wale SQL wale tareeke se us user ki **app_metadata** me gym_id do:
+   `{"gym_id": "gym-main"}`
 
 Bas. Purana data `gym-main` gym ka maan liya jayega, kuch delete nahi hoga.
 
@@ -34,8 +36,8 @@ database level par alag rehta hai — ek gym ka login dusre gym ka data dekh
 hi nahi sakta, aur ek gym ka QR card dusre gym ke gate par kaam nahi karega.
 
 1. Authentication > Users > Add user > Create new user. Dusre gym ke owner ka email/password daalo, "Auto Confirm User" ON.
-2. Us user ki "User Metadata" mein daalo:
-   `{ "gym_id": "gym-fitlife" }`
+2. SQL se us user ki **app_metadata** me gym_id do:
+   `{"gym_id": "gym-fitlife"}` (uper step 4 wala SQL, email aur id badal ke)
    (Har naye gym ke liye alag id: `gym-fitlife`, `gym-powerhouse`...)
 3. Bas. Wo login karega to usko bilkul khaali naya gym milega. Pehle gym ka data usko dikhega hi nahi.
 
@@ -45,8 +47,9 @@ Kisi gym owner ko demo dena ho to usko hamesha **alag login + alag gym_id**
 do (apna main login kabhi mat do). App pehle se hi online-only hai — files
 copy karke bina login/database ke app chal hi nahi sakti. Uspar trial lock:
 
-1. Upar wale steps se uska user banao, metadata mein naya gym_id do,
-   jaise `{ "gym_id": "gym-demo1" }`.
+1. Upar wale steps se uska user banao, app_metadata mein naya gym_id do,
+   jaise `{"gym_id": "gym-demo1"}`. (Ab ye kaam admin panel se ek click me
+   ho jata hai — ye manual tareeka sirf backup ke liye rakha hai.)
 2. Ek baar Supabase mein `supabase-license.sql` chalaya hua hona chahiye
    (license table ban jayegi, tumhara `gym-main` hamesha active rahega).
 3. SQL Editor mein demo ki license row banao (7 din ka trial):
@@ -68,7 +71,7 @@ row banana mat bhoolna.
 - **Data owner ke Supabase mein hai.** Table Editor > `records` mein poora data dekh sakte ho (`gym_id` column mein kaunsa gym hai, ye bhi dikhta hai).
 - **Access band karna ho:** Authentication > Users mein us user ko delete kar do ya password badal do. Us phone pe app turant kaam karna band kar degi.
 - **Excel download:** app ke andar Reports / Attendance / Members se date-wise ya month-wise Excel (CSV) nikal sakte ho.
-- **Ek gym mein ek se zyada staff:** un sabko SAME `gym_id` wali metadata ke saath alag user banao (sabko same gym ka data dikhega). Kisi ko nikalna ho to uska user delete kar do.
+- **Ek gym mein ek se zyada staff:** un sabko SAME `gym_id` wali app_metadata ke saath alag user banao (sabko same gym ka data dikhega). Kisi ko nikalna ho to uska user delete kar do.
 
 ## Zaroori baatein
 
