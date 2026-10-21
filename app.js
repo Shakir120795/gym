@@ -77,6 +77,7 @@ const I = {
   bell: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/>',
   reports: '<path d="M5 20V10M12 20V4M19 20v-7"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2.500v3M12 18.500v3M2.500 12h3M18.500 12h3M5.300 5.300l2.100 2.100M16.600 16.600l2.100 2.100M5.300 18.700l2.100-2.100M16.600 7.400l2.100-2.100"/>',
+  menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
   phone: '<path d="M5 4h4l2 5-2.500 1.500a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/>',
   chat: '<path d="M4 5h16v11H9l-5 4z"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
@@ -147,6 +148,7 @@ const ui = {
   tab: 'home', filter: 'all', q: '', feeTab: 'pending',
   attMode: 'scan', attDate: today(), attQ: '', attMonth: today().slice(0, 7),
   repMode: 'monthly', repDate: today(), repMonth: today().slice(0, 7),
+  setTab: 'profile',
 };
 const TABS = [['home', 'Home', 'home'], ['members', 'Members', 'members'], ['fees', 'Fees', 'fees'],
   ['attendance', 'Attendance', 'attendance'], ['reports', 'Reports', 'reports']];
@@ -155,7 +157,7 @@ function render() {
   if (!(scan.stream && ui.tab === 'attendance' && ui.attMode === 'scan')) stopCam();
   $('#gymName').textContent = db.gym.name || 'Gym Manager';
   document.title = (db.gym.name || 'Gym') + ' | Gym Manager';
-  $('#settingsBtn').innerHTML = ic('gear', 24);
+  $('#settingsBtn').innerHTML = ic('menu', 26);
   $('#tabs').innerHTML = TABS.map(([k, l, i]) =>
     `<button class="${ui.tab === k ? 'on' : ''}" data-act="tab" data-k="${k}" ${ui.tab === k ? 'aria-current="page"' : ''}>${ic(i)}<span>${l}</span></button>`).join('');
   const views = { home: viewHome, members: viewMembers, fees: viewFees, attendance: viewAttendance, reports: viewReports };
@@ -702,13 +704,14 @@ function exportReport() {
   r.pending.forEach(m => rows.push([m.name, txt(m.mobile), m.due, m.expiry]));
   download(`gym-report-${r.key}.csv`, csv(rows));
 }
-function exportPending() {
+function pendingRows() {
   const rows = [['Member', 'Mobile', 'Due amount', 'Plan', 'Membership ends']];
   db.members.filter(m => (m.due || 0) > 0).sort((a, b) => (b.due || 0) - (a.due || 0) || a.name.localeCompare(b.name))
     .forEach(m => rows.push([m.name, txt(m.mobile), m.due, m.planName, m.expiry]));
   rows.push([], ['Total due', sum(db.members.filter(m => (m.due || 0) > 0).map(m => ({ amount: m.due })))]);
-  download(`gym-pending-fees-${today()}.csv`, csv(rows));
+  return rows;
 }
+function exportPending() { download(`gym-pending-fees-${today()}.csv`, csv(pendingRows())); }
 function exportAttDay() {
   const d = ui.attDate, day = db.checkins[d] || {};
   const ids = [...new Set([...(db.attendance[d] || []), ...Object.keys(day)])].filter(getM).map(getM).sort((a, b) => a.name.localeCompare(b.name));
@@ -720,10 +723,68 @@ function exportAttDay() {
   rows.push([], ['Total members', ids.length]);
   download(`gym-attendance-${d}.csv`, csv(rows));
 }
-function exportMembers() {
+function membersRows() {
   const rows = [['Name', 'Mobile', 'Gender', 'Address', 'Joining date', 'Plan', 'Personal trainer', 'Plan fee', 'Membership ends', 'Status', 'Fees due']];
   db.members.forEach(m => rows.push([m.name, txt(m.mobile), m.gender || '', m.address || '', m.joinDate, m.planName, m.pt || '', m.fee, m.expiry, status(m).key, m.due || 0]));
-  download(`gym-members-${today()}.csv`, csv(rows));
+  return rows;
+}
+function exportMembers() { download(`gym-members-${today()}.csv`, csv(membersRows())); }
+function paymentsRows(from, to) {
+  const ps = db.payments.filter(p => p.date >= from && p.date <= to).slice().sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const rows = [['Date', 'Member', 'Amount', 'Mode', 'Type']];
+  ps.forEach(p => rows.push([p.date, p.name, p.amount, p.mode, p.type]));
+  rows.push([], ['Total', '', sum(ps)]);
+  return { rows, count: ps.length };
+}
+function attendanceRangeRows(from, to) {
+  const rows = [['Date', 'Member', 'Mobile', 'Morning', 'Evening']];
+  let n = 0;
+  for (let d = from; d <= to; d = addDays(d, 1)) {
+    const day = db.checkins[d] || {}, att = db.attendance[d] || [];
+    const ids = [...new Set([...att, ...Object.keys(day)])].filter(getM)
+      .sort((x, y) => getM(x).name.localeCompare(getM(y).name));
+    ids.forEach(id => {
+      const m = getM(id), v = day[id] || [];
+      const t = s => (v.find(x => x.s === s) || {}).t || (att.includes(id) ? 'Present' : '');
+      rows.push([d, m.name, txt(m.mobile), t('M'), t('E')]); n++;
+    });
+  }
+  return { rows, count: n };
+}
+/* Settings > Export: type + period (month-wise ya date range) */
+function doExport() {
+  const type = ($('#expType') || {}).value || 'members';
+  if (type === 'members') return exportMembers();
+  if (type === 'feesdue') return exportPending();
+  const mode = ($('#expMode') || {}).value || 'month';
+  let from, to;
+  if (mode === 'month') {
+    const ym = ($('#expMonth') || {}).value || today().slice(0, 7);
+    const [y, mo] = ym.split('-').map(Number);
+    from = ym + '-01';
+    to = `${y}-${String(mo).padStart(2, '0')}-${String(new Date(y, mo, 0).getDate()).padStart(2, '0')}`;
+  } else { from = ($('#expFrom') || {}).value; to = ($('#expTo') || {}).value; }
+  if (!from || !to || from > to) return toast('Sahi date range chuno', true);
+  const cap = type === 'payments' ? 3650 : 366; // attendance din-ba-din banta hai, isliye 1 saal ki hadd
+  if (daysBetween(from, to) > cap) return toast('Ek baar me zyada se zyada ' + (cap === 366 ? '1 saal' : '10 saal') + ' ka data milega', true);
+  if (type === 'payments') {
+    const r = paymentsRows(from, to);
+    if (!r.count) return toast('Is period me koi payment nahi hai', true);
+    return download(`gym-payments-${from}-to-${to}.csv`, csv(r.rows));
+  }
+  if (type === 'attendance') {
+    const r = attendanceRangeRows(from, to);
+    if (!r.count) return toast('Is period me attendance nahi hai', true);
+    return download(`gym-attendance-${from}-to-${to}.csv`, csv(r.rows));
+  }
+  const pr = paymentsRows(from, to), ar = attendanceRangeRows(from, to);
+  const rows = [[db.gym.name || 'Gym', 'All data export', `${from} to ${to}`], [],
+    ['=== MEMBERS ==='], ...membersRows(), [],
+    ['=== FEES DUE ==='], ...pendingRows(), [],
+    ['=== PAYMENTS ==='], ...pr.rows, [],
+    ['=== ATTENDANCE ==='], ...ar.rows];
+  download(`gym-all-data-${from}-to-${to}.csv`, csv(rows));
+  toast('All data download ho gaya');
 }
 function exportAttendance() {
   const r = monthAtt(ui.attMonth), head = ['Member', 'Mobile'];
@@ -846,24 +907,61 @@ function planRow(p = {}) {
     <label>Fee<input name="pf" type="number" min="0" required value="${p.fee ?? ''}"></label>
     <button type="button" class="ib" data-act="rmPlan" aria-label="Remove plan">&times;</button></div>`;
 }
+const SET_TABS = [['profile', 'Profile'], ['plans', 'Plans'], ['export', 'Export'], ['backup', 'Backup'], ['privacy', 'Privacy'], ['account', 'Account']];
 function settingsSheet() {
-  openSheet('Settings', `<form data-form="settings" autocomplete="off">
-    <label>Gym name<input name="gym" required value="${esc(db.gym.name)}"></label>
-    <div class="two"><label>Owner PIN (4 digits)<input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" value="${esc(db.gym.pin || '')}" placeholder="For manual entry"></label>
-    <label>Evening starts at (hour)<input name="ef" type="number" min="1" max="23" value="${db.gym.eveningFrom || 12}"></label></div>
-    <div class="two"><label>Gate voice<select name="voice">${[['en', 'English'], ['hi', 'Hindi'], ['off', 'Off']].map(([k, l]) => `<option value="${k}" ${(db.gym.voice || 'en') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-    <label>Warn before expiry (days)<input name="warn" type="number" min="1" max="60" value="${warnDays()}"></label></div>
-    <h3 style="font-size:20px;margin:20px 0 0">Membership plans</h3>
-    <div id="plans">${db.plans.map(planRow).join('')}</div>
-    <button type="button" class="btn ghost small" style="margin-top:10px" data-act="addPlan">Add plan</button>
-    <button class="btn primary wide">Save settings</button></form>
-    <hr><h3 style="font-size:20px;margin:0 0 8px">Online database</h3>
-    <p class="mini" style="margin:0 0 10px">${esc(window.cloud ? cloud.statusText() : '')}</p>
-    ${window.cloud && cloud.enabled ? `<div class="actions"><button class="btn ghost" data-act="logout">Log out</button></div>` : ''}
-    <hr><h3 style="font-size:20px;margin:0 0 8px">Data backup</h3>
-    <p class="mini" style="margin:0 0 10px">Download your complete gym data as a file. Keep it somewhere safe — everything can be restored from it.</p>
-    <div class="actions"><button class="btn ghost" data-act="dlBackup">Download backup</button></div>
-    <hr><div class="actions">${window.cloud && cloud.enabled ? '' : '<button class="btn ghost" data-act="demo">Load demo data</button>'}<button class="btn danger" data-act="reset">Delete all data</button></div>`);
+  const st = ui.setTab || 'profile';
+  const panel = (k, body) => `<div data-setpanel="${k}" ${st === k ? '' : 'hidden'}>${body}</div>`;
+  const support = (window.GYM_CLOUD && window.GYM_CLOUD.support) || '';
+  openSheet('Settings', `
+    <div class="seg" style="flex-wrap:wrap">${SET_TABS.map(([k, l]) => `<button type="button" class="${st === k ? 'on' : ''}" data-act="setTab" data-k="${k}">${l}</button>`).join('')}</div>
+    <form data-form="settings" autocomplete="off">
+    ${panel('profile', `
+      <label>Gym name<input name="gym" required value="${esc(db.gym.name)}"></label>
+      <label>Gym mobile number<input name="gphone" type="tel" inputmode="numeric" maxlength="15" value="${esc(db.gym.phone || '')}" placeholder="e.g. 9876543210"></label>
+      <label>Gym address<input name="gaddr" value="${esc(db.gym.address || '')}" placeholder="e.g. Station Road, Agra"></label>
+      <div class="two"><label>Owner PIN (4 digits)<input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" value="${esc(db.gym.pin || '')}" placeholder="For manual entry"></label>
+      <label>Evening starts at (hour)<input name="ef" type="number" min="1" max="23" value="${db.gym.eveningFrom || 12}"></label></div>
+      <div class="two"><label>Gate voice<select name="voice">${[['en', 'English'], ['hi', 'Hindi'], ['off', 'Off']].map(([k, l]) => `<option value="${k}" ${(db.gym.voice || 'en') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label>Warn before expiry (days)<input name="warn" type="number" min="1" max="60" value="${warnDays()}"></label></div>
+      <button class="btn primary wide">Save settings</button>`)}
+    ${panel('plans', `
+      <h3 style="font-size:20px;margin:4px 0 0">Membership plans</h3>
+      <div id="plans">${db.plans.map(planRow).join('')}</div>
+      <button type="button" class="btn ghost small" style="margin-top:10px" data-act="addPlan">Add plan</button>
+      <button class="btn primary wide">Save settings</button>`)}
+    </form>
+    ${panel('export', `
+      <h3 style="font-size:20px;margin:4px 0 8px">Export data (Excel)</h3>
+      <p class="mini" style="margin:0 0 10px">Jo data chahiye wo chuno. File CSV me download hogi — Excel me seedha khul jayegi.</p>
+      <label>Data type<select id="expType">
+        <option value="members">Members (sab)</option>
+        <option value="feesdue">Fees due (pending)</option>
+        <option value="attendance">Attendance</option>
+        <option value="payments">Payments / collection</option>
+        <option value="all">All data (sab kuch ek file me)</option>
+      </select></label>
+      <label>Period<select id="expMode"><option value="month">Month-wise</option><option value="range">Date range (date se date tak)</option></select></label>
+      <label id="expMonthWrap">Month<input type="month" id="expMonth" value="${today().slice(0, 7)}"></label>
+      <div class="two" id="expRangeWrap" hidden><label>From date<input type="date" id="expFrom" value="${today().slice(0, 8)}01"></label><label>To date<input type="date" id="expTo" value="${today()}"></label></div>
+      <p class="mini">Members aur Fees due hamesha aaj ke current hote hain — period sirf Attendance, Payments aur All data par lagta hai.</p>
+      <button class="btn primary wide" data-act="doExport">Download</button>`)}
+    ${panel('backup', `
+      <h3 style="font-size:20px;margin:4px 0 8px">Data backup</h3>
+      <p class="mini" style="margin:0 0 10px">Poora gym data ek hi file me — members, payments, attendance, plans aur settings sab. File ko apne paas safe rakho; kabhi data kharab ho jaye to isi file se wapas la sakte hain.</p>
+      <p class="mini" style="margin:0 0 10px">Is samay: <b>${db.members.length}</b> members · <b>${db.payments.length}</b> payments</p>
+      <button class="btn primary wide" data-act="dlBackup">Download full backup (All data)</button>`)}
+    ${panel('privacy', `
+      <h3 style="font-size:20px;margin:4px 0 8px">Privacy</h3>
+      <p class="mini" style="margin:0 0 8px"><b>Tumhara data, tumhara hai.</b> Gym ka data (members, payments, attendance) secure cloud me save hota hai, taaki phone badalne ya kharab hone par bhi data na khoye.</p>
+      <p class="mini" style="margin:0 0 8px"><b>Kaun dekh sakta hai?</b> Sirf tumhare gym ke login se tumhare gym ka data khulta hai. Koi dusra gym tumhara data nahi dekh sakta. Password koi nahi dekh sakta — na app banane wala; wo sirf reset ho sakta hai.</p>
+      <p class="mini" style="margin:0 0 8px"><b>Tumhare control me:</b> Tum kabhi bhi Settings se poora backup aur export le sakte ho. App band karna ho to bata do — tumhara data delete kar diya jayega.</p>
+      <p class="mini" style="margin:0">Data becha nahi jata, kisi advertiser ko nahi diya jata.${support ? ` Sawal ho to WhatsApp karo: ${esc(support)}` : ''}</p>`)}
+    ${panel('account', `
+      <h3 style="font-size:20px;margin:4px 0 8px">Online database</h3>
+      <p class="mini" style="margin:0 0 10px">${esc(window.cloud ? cloud.statusText() : '')}</p>
+      ${window.cloud && cloud.enabled ? `<div class="actions"><button class="btn ghost" data-act="logout">Log out</button></div>` : ''}
+      <hr><div class="actions">${window.cloud && cloud.enabled ? '' : '<button class="btn ghost" data-act="demo">Load demo data</button>'}<button class="btn danger" data-act="reset">Delete all data</button></div>`)}
+  `);
 }
 
 /* ---------- form handlers ---------- */
@@ -912,7 +1010,7 @@ const handlers = {
     const ids = f.getAll('pid'), names = f.getAll('pn'), months = f.getAll('pm'), fees = f.getAll('pf');
     if (!names.length) return toast('Keep at least one plan', true);
     db.plans = names.map((n, i) => ({ id: ids[i] || 'p' + Date.now().toString(36) + i, name: n.trim(), months: +months[i], fee: +fees[i] }));
-    db.gym.name = f.get('gym').trim(); db.gym.pin = f.get('pin').trim(); db.gym.eveningFrom = +f.get('ef') || 12; db.gym.voice = f.get('voice') || 'en'; db.gym.warnDays = +f.get('warn') || 10;
+    db.gym.name = f.get('gym').trim(); db.gym.phone = (f.get('gphone') || '').trim(); db.gym.address = (f.get('gaddr') || '').trim(); db.gym.pin = f.get('pin').trim(); db.gym.eveningFrom = +f.get('ef') || 12; db.gym.voice = f.get('voice') || 'en'; db.gym.warnDays = +f.get('warn') || 10;
     save(); closeSheet(); render(); toast('Settings saved');
   },
 };
@@ -1006,6 +1104,12 @@ const actions = {
   },
   exportRep: exportReport, exportMembers, exportPending, exportAtt: exportAttendance, exportAttDay,
   settings: settingsSheet,
+  setTab: b => {
+    ui.setTab = b.dataset.k;
+    document.querySelectorAll('#sheetBody [data-setpanel]').forEach(p => { p.hidden = p.dataset.setpanel !== ui.setTab; });
+    document.querySelectorAll('#sheetBody [data-act="setTab"]').forEach(x => x.classList.toggle('on', x.dataset.k === ui.setTab));
+  },
+  doExport,
   logout: () => { if (confirm('Log out from this phone?')) { closeSheet(); cloud.logout(); } },
   dlBackup: () => {
     const payload = { app: 'gym-manager', gymId: (window.cloud && cloud.gymId) || 'gym-main', exportedAt: new Date().toISOString(), data: db };
@@ -1072,6 +1176,7 @@ document.addEventListener('change', e => {
   else if (t.id === 'attMonth') { ui.attMonth = t.value || ui.attMonth; $('#attBody').innerHTML = attMonthly(); }
   else if (t.id === 'repDate') { ui.repDate = t.value || ui.repDate; render(); }
   else if (t.id === 'repMonth') { ui.repMonth = t.value || ui.repMonth; render(); }
+  else if (t.id === 'expMode') { const m = t.value === 'month'; if ($('#expMonthWrap')) $('#expMonthWrap').hidden = !m; if ($('#expRangeWrap')) $('#expRangeWrap').hidden = m; }
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeCam(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet(); });

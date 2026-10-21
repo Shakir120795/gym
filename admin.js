@@ -116,9 +116,9 @@ function gymCard(g) {
   const changeRow = `
     <p class="small" style="margin:12px 0 0">Plan badlo (aaj se fresh plan — purani bachi duration khatam ho jayegi):</p>
     <div class="rowbtns" style="margin-top:6px">${planBtns('setPlan', false)}</div>`;
-  const addUserForm = `
-    <div id="nu-form-${esc(g.gymId)}" ${g.users.length ? 'hidden' : ''} style="margin-top:12px;border-top:1px dashed var(--line);padding-top:10px">
-      <p class="small" style="margin:0 0 6px">${g.users.length ? 'Is gym ke liye ek aur login banao (staff ke liye) — data aur plan pehle jaisa rahega:' : 'Is gym ke liye login banao — yahi se is gym ka access milta hai (data aur plan pehle jaisa rahega):'}</p>
+  const addUserForm = g.users.length ? '' : `
+    <div id="nu-form-${esc(g.gymId)}" style="margin-top:12px;border-top:1px dashed var(--line);padding-top:10px">
+      <p class="small" style="margin:0 0 6px">Is gym ka koi login nahi hai — login banao, yahi se is gym ka access milega (data aur plan pehle jaisa rahega):</p>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <input id="nu-e-${esc(g.gymId)}" type="email" placeholder="Email" style="flex:1;min-width:150px">
         <input id="nu-p-${esc(g.gymId)}" type="text" placeholder="Password (6+)" style="flex:1;min-width:110px">
@@ -136,7 +136,6 @@ function gymCard(g) {
       ${s.key !== 'locked' ? `<button class="btn small danger" data-aact="lock" data-g="${esc(g.gymId)}">Abhi lock karo</button>` : ''}
     </div>
     ${users}
-    ${g.users.length ? `<div class="rowbtns"><button class="btn small" data-aact="toggleAddUser" data-g="${esc(g.gymId)}">+ Ek aur login banao</button></div>` : ''}
     ${addUserForm}
   </div>`;
 }
@@ -193,7 +192,6 @@ document.addEventListener('click', async e => {
   else if (act === 'genPw') { $('#demoPw').value = 'Gym@' + Math.floor(100000 + Math.random() * 900000); }
   else if (act === 'upgrade') upgradeAction(b.dataset.g, b.dataset.plan);
   else if (act === 'setPlan') setPlanAction(b.dataset.g, b.dataset.plan);
-  else if (act === 'toggleAddUser') { const f = $('#nu-form-' + b.dataset.g); if (f) f.hidden = !f.hidden; }
   else if (act === 'extend' || act === 'lock') gymAction(act, b.dataset.g);
   else if (act === 'addUser') {
     const gid = b.dataset.g;
