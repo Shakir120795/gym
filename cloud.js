@@ -66,10 +66,10 @@
     const r = await fetch(`${root}/auth/v1/token?grant_type=${grant}`, { method: 'POST', headers: { apikey: C.key, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw Object.assign(new Error(j.error_description || j.msg || j.message || 'Sign in failed'), { status: r.status });
-    session = { access: j.access_token, refresh: j.refresh_token, exp: Date.now() + (j.expires_in || 3600) * 1000, email: (j.user && j.user.email) || body.email || '', gymId: (j.user && j.user.user_metadata && j.user.user_metadata.gym_id) || 'gym-main' };
+    session = { access: j.access_token, refresh: j.refresh_token, exp: Date.now() + (j.expires_in || 3600) * 1000, email: (j.user && j.user.email) || body.email || '', gymId: (j.user && j.user.user_metadata && j.user.user_metadata.gym_id) || '' };
     wr(AUTH, session);
   }
-  function gymId() { return (session && session.gymId) || 'gym-main'; }
+  function gymId() { return (session && session.gymId) || ''; }
 
   /* ---------- license / demo lock ----------
      One row per gym in the `licenses` table. The app can only READ its own
@@ -298,6 +298,14 @@
     starting = true;
     try {
       hideLogin(); hideBlock(); setState('loading');
+      if (!gymId()) {
+        // Login hai, par kisi gym se juda nahi (jaise admin/panel wala
+        // email). Koi data nahi khulega — seedha login screen + wajah.
+        requireLogin();
+        const lm = q('#loginMsg');
+        if (lm) lm.textContent = 'Is email ke saath koi gym juda nahi hai. Apne gym wale email se login karo — admin/panel wala email app ke liye nahi hai.';
+        return;
+      }
       const net = await checkNet();
       if (net === 'auth') { requireLogin(); return; }
       if (net === 'offline') { goOffline(); return; }

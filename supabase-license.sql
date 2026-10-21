@@ -31,7 +31,7 @@ alter table public.licenses enable row level security;
 drop policy if exists "read own license" on public.licenses;
 create policy "read own license" on public.licenses
   for select to authenticated
-  using (gym_id = coalesce(auth.jwt() -> 'user_metadata' ->> 'gym_id', 'gym-main'));
+  using (gym_id = (auth.jwt() -> 'user_metadata' ->> 'gym_id'));
 
 -- Pehla (apna) gym hamesha active — kabhi lock nahi hoga.
 insert into public.licenses (gym_id, status, trial_ends, plan, plan_ends)

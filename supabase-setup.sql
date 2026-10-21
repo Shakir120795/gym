@@ -30,15 +30,15 @@ create trigger records_touch before insert or update on public.records
   for each row execute function public.touch_updated_at();
 
 -- Each login sees ONLY its own gym's data. The gym comes from the user's
--- metadata (falls back to 'gym-main' for the first gym's login).
+-- metadata. No gym_id in metadata = no data at all (e.g. the admin login).
 alter table public.records enable row level security;
 
 drop policy if exists "signed in users only" on public.records;
 drop policy if exists "own gym only" on public.records;
 create policy "own gym only" on public.records
   for all to authenticated
-  using (gym_id = coalesce(auth.jwt() -> 'user_metadata' ->> 'gym_id', 'gym-main'))
-  with check (gym_id = coalesce(auth.jwt() -> 'user_metadata' ->> 'gym_id', 'gym-main'));
+  using (gym_id = (auth.jwt() -> 'user_metadata' ->> 'gym_id'))
+  with check (gym_id = (auth.jwt() -> 'user_metadata' ->> 'gym_id'));
 
 -- License / demo lock: one row per gym. The app can only READ its own
 -- gym's row; only the SQL editor (super admin) can create or change rows.
@@ -58,7 +58,7 @@ alter table public.licenses enable row level security;
 drop policy if exists "read own license" on public.licenses;
 create policy "read own license" on public.licenses
   for select to authenticated
-  using (gym_id = coalesce(auth.jwt() -> 'user_metadata' ->> 'gym_id', 'gym-main'));
+  using (gym_id = (auth.jwt() -> 'user_metadata' ->> 'gym_id'));
 
 insert into public.licenses (gym_id, status, trial_ends)
 values ('gym-main', 'active', null)
