@@ -82,6 +82,8 @@ const I = {
   chat: '<path d="M4 5h16v11H9l-5 4z"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   check: '<path d="M5 12.500l4.500 4.500L19 7.500"/>',
+  download: '<path d="M12 3v12M6 10l6 6 6-6M4 21h16"/>',
+  shield: '<path d="M12 3l7 3v5c0 5-3.5 8.200-7 9.200C8.500 19.200 5 16 5 11V6z"/><path d="M9 11.500l2.200 2.200L15.500 9.500"/>',
 };
 const ic = (n, s = 22) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>`;
 
@@ -907,13 +909,15 @@ function planRow(p = {}) {
     <label>Fee<input name="pf" type="number" min="0" required value="${p.fee ?? ''}"></label>
     <button type="button" class="ib" data-act="rmPlan" aria-label="Remove plan">&times;</button></div>`;
 }
-const SET_TABS = [['profile', 'Profile'], ['plans', 'Plans'], ['export', 'Export'], ['backup', 'Backup'], ['privacy', 'Privacy'], ['account', 'Account']];
+const SET_TABS = [['profile', 'Profile', 'gear'], ['plans', 'Plans', 'fees'], ['export', 'Export', 'reports'], ['backup', 'Backup', 'download'], ['privacy', 'Privacy', 'shield'], ['account', 'Account', 'members']];
 function settingsSheet() {
   const st = ui.setTab || 'profile';
   const panel = (k, body) => `<div data-setpanel="${k}" ${st === k ? '' : 'hidden'}>${body}</div>`;
   const support = (window.GYM_CLOUD && window.GYM_CLOUD.support) || '';
   openSheet('Settings', `
-    <div class="seg" style="flex-wrap:wrap">${SET_TABS.map(([k, l]) => `<button type="button" class="${st === k ? 'on' : ''}" data-act="setTab" data-k="${k}">${l}</button>`).join('')}</div>
+    <div class="setwrap">
+    <div class="setside">${SET_TABS.map(([k, l, icn]) => `<button type="button" class="${st === k ? 'on' : ''}" data-act="setTab" data-k="${k}">${ic(icn, 19)}<span>${l}</span></button>`).join('')}</div>
+    <div class="setmain">
     <form data-form="settings" autocomplete="off">
     ${panel('profile', `
       <label>Gym name<input name="gym" required value="${esc(db.gym.name)}"></label>
@@ -961,6 +965,8 @@ function settingsSheet() {
       <p class="mini" style="margin:0 0 10px">${esc(window.cloud ? cloud.statusText() : '')}</p>
       ${window.cloud && cloud.enabled ? `<div class="actions"><button class="btn ghost" data-act="logout">Log out</button></div>` : ''}
       <hr><div class="actions">${window.cloud && cloud.enabled ? '' : '<button class="btn ghost" data-act="demo">Load demo data</button>'}<button class="btn danger" data-act="reset">Delete all data</button></div>`)}
+    </div>
+    </div>
   `);
 }
 

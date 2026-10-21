@@ -174,10 +174,25 @@ button.row:active{background:var(--card2)}
 .sheet-head h2::after{display:none}
 .sheet-body{overflow:auto;padding:4px 20px calc(24px + var(--sb))}
 @keyframes up{from{transform:translateY(60px);opacity:.3}to{transform:none;opacity:1}}
-form label{display:block;font-weight:600;font-size:14px;margin-top:13px;color:var(--mute)}
-form input,form select{display:block;width:100%;margin-top:5px;padding:13px;border:1px solid var(--line);border-radius:12px;
+form label,.setmain label{display:block;font-weight:600;font-size:14px;margin-top:13px;color:var(--mute)}
+form input,form select,.setmain input,.setmain select{display:block;width:100%;margin-top:5px;padding:13px;border:1px solid var(--line);border-radius:12px;
   background:#0F1216;color:var(--ink);font-weight:400;font-size:16px;color-scheme:dark}
-form input:focus,form select:focus{border-color:var(--gold);outline:0}
+form input:focus,form select:focus,.setmain input:focus,.setmain select:focus{border-color:var(--gold);outline:0}
+/* settings: sidebar menu layout (app style) */
+.setwrap{display:flex;gap:16px;align-items:flex-start}
+.setside{display:flex;flex-direction:column;gap:4px;min-width:152px;position:sticky;top:0;background:var(--card);
+  border:1px solid var(--line);border-radius:14px;padding:8px}
+.setside button{display:flex;align-items:center;gap:9px;border:0;background:none;color:var(--mute);padding:11px 12px;
+  border-radius:10px;font-weight:600;font-size:15px;text-align:left;cursor:pointer;width:100%}
+.setside button:hover{background:var(--card2);color:var(--ink)}
+.setside button.on{background:var(--grad);color:#241A05;font-weight:700}
+.setmain{flex:1;min-width:0}
+.setmain h3{margin-top:2px}
+@media (max-width:560px){
+  .setwrap{gap:10px}
+  .setside{min-width:108px;padding:6px}
+  .setside button{font-size:13px;padding:9px 8px;gap:6px}
+}
 .planrow{display:grid;grid-template-columns:1.4fr .7fr .9fr auto;gap:6px;align-items:end;margin-top:8px}
 .planrow input{margin-top:0;padding:11px 8px}
 .planrow .ib{background:var(--card2);width:38px;height:44px}
