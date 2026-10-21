@@ -215,6 +215,7 @@ function viewHome() {
   const monthCol = sum(db.payments.filter(p => p.date.startsWith(ym)));
   const pend = ms.filter(m => m.due > 0), pendAmt = sum(pend.map(m => ({ amount: m.due })));
   const dc = dayCounts(t), came = dc.members;
+  const remLeft = reminderQueue().filter(x => !x.sent).length;
   const soon = ms.filter(m => { const l = daysBetween(t, m.expiry); return l >= 0 && l < warnDays(); }).sort((a, b) => a.expiry.localeCompare(b.expiry));
   const stat = (act, extra, cls, icon, val, fmt, label) =>
     `<button class="stat" data-act="${act}" ${extra}><span class="sic ${cls}">${ic(icon, 22)}</span><span><b data-count="${val}"${fmt ? ` data-fmt="${fmt}"` : ''}>${fmt === 'inr' ? inr(val) : val}</b><small>${label}</small></span></button>`;
@@ -236,6 +237,7 @@ function viewHome() {
     <button class="btn primary" data-act="add">${ic('plus', 20)} Add member</button>
     <button class="btn" data-act="tab" data-k="attendance">${ic('check', 20)} Scan entry</button>
   </div>
+  ${remLeft ? `<button class="btn wide" data-act="goRemind" style="margin-top:10px">${ic('bell', 18)} Aaj ke reminders — ${remLeft} bache hain</button>` : ''}
   <h2>Membership ending soon</h2>
   ${soon.length ? `<div class="list">${soon.slice(0, 6).map(memberRow).join('')}</div>${soon.length > 6 ? `<p class="mini">${soon.length - 6} more in Fees \u2192 Reminders</p>` : ''}`
       : `<div class="list"><div class="empty">${ms.length ? 'No memberships ending soon.' : 'Add your first member to get started.'}</div></div>`}
@@ -626,24 +628,49 @@ function copyText(text) {
 }
 
 /* ---------- reminders ---------- */
-function remRow(m, kind) {
+function reminderQueue() {
+  const t = today(), items = [];
+  db.members.forEach(m => {
+    const left = daysBetween(t, m.expiry);
+    let kind = null, prio = 9;
+    if (m.expiry < t) { kind = 'exp'; prio = 0; }              // khatam ho gaya
+    else if (left < warnDays()) { kind = 'exp'; prio = 1; }   // khatam hone wala
+    else if ((m.due || 0) > 0) { kind = 'due'; prio = 2; }    // fees baki
+    if (kind) items.push({ m, kind, prio, sent: !!(m.rem && m.rem.d === t) });
+  });
+  items.sort((a, b) => a.prio - b.prio
+    || (a.prio === 0 ? b.m.expiry.localeCompare(a.m.expiry) : 0)
+    || (a.prio === 1 ? a.m.expiry.localeCompare(b.m.expiry) : 0)
+    || (a.prio === 2 ? (b.m.due || 0) - (a.m.due || 0) : 0));
+  return items;
+}
+function remRow(m, kind, sent) {
   const s = status(m);
-  return `<div class="row">${avatar(m, 40)}
+  return `<div class="row" ${sent ? 'style="opacity:.55"' : ''}>${avatar(m, 40)}
     <button class="who" style="background:none;border:0;text-align:left;padding:0" data-act="member" data-id="${m.id}"><b>${esc(m.name)}</b><small>${kind === 'due' ? 'Pending ' + inr(m.due) : (s.key === 'expired' ? 'Ended ' : 'Ends ') + fmtDate(m.expiry)}</small></button>
+    ${sent ? '<span class="mini" style="color:var(--green);font-weight:700;white-space:nowrap">✓ Bhej diya</span>' : ''}
     <span class="acts"><a class="ib" href="tel:${esc(m.mobile)}" aria-label="Call ${esc(m.name)}">${ic('phone', 20)}</a>
     <button class="ib" data-act="wa" data-id="${m.id}" data-k="${kind}" aria-label="WhatsApp ${esc(m.name)}">${ic('chat', 20)}</button>
     <button class="ib txt" data-act="${kind === 'due' ? 'collect' : 'renew'}" data-id="${m.id}">${kind === 'due' ? 'Collect' : 'Renew'}</button></span></div>`;
 }
 function viewReminders() {
-  const t = today(), ms = db.members;
-  const soon = ms.filter(m => { const l = daysBetween(t, m.expiry); return l >= 0 && l < warnDays(); }).sort((a, b) => a.expiry.localeCompare(b.expiry));
-  const gone = ms.filter(m => m.expiry < t).sort((a, b) => b.expiry.localeCompare(a.expiry));
-  const due = ms.filter(m => m.due > 0).sort((a, b) => b.due - a.due);
-  const sec = (title, arr, kind, none, copyK) => `<div class="sechd"><h2>${title} (${arr.length})</h2>${arr.length && copyK ? `<button class="btn ghost small" data-act="copyRem" data-k="${copyK}">Copy list</button>` : ''}</div><div class="list">${arr.length ? arr.map(m => remRow(m, kind)).join('') : `<div class="empty">${none}</div>`}</div>`;
-  return `<p class="sum" style="margin-top:0">Tap the chat icon to send a ready WhatsApp message, or the phone icon to call.</p>` +
-    sec(`Ending in less than ${warnDays()} days`, soon, 'exp', 'Nobody is ending soon.', 'soon') +
-    sec('Fees pending', due, 'due', 'No pending fees.', 'due') +
-    sec('Already expired', gone, 'exp', 'No expired members.');
+  const q = reminderQueue();
+  const left = q.filter(x => !x.sent), done = q.filter(x => x.sent);
+  const pct = q.length ? Math.round(done.length * 100 / q.length) : 100;
+  const next = left[0];
+  const sec = (title, arr) => arr.length ? `<div class="sechd"><h2>${title} (${arr.length})</h2></div><div class="list">${arr.map(x => remRow(x.m, x.kind, x.sent)).join('')}</div>` : '';
+  const nextCard = next ? `<div class="sechd"><h2>Agla reminder</h2></div>
+    <div class="list"><div class="row" style="border:1px solid var(--gold);border-radius:14px">${avatar(next.m, 44)}
+      <span class="who"><b>${esc(next.m.name)}</b><small>${next.kind === 'due' ? 'Pending ' + inr(next.m.due) : (status(next.m).key === 'expired' ? 'Ended ' : 'Ends ') + fmtDate(next.m.expiry)}</small></span>
+      <a class="ib" href="tel:${esc(next.m.mobile)}" aria-label="Call">${ic('phone', 20)}</a></div></div>
+    <button class="btn primary wide" data-act="wa" data-id="${next.m.id}" data-k="${next.kind}" style="margin-top:8px">${ic('chat', 18)} WhatsApp par bhejo</button>` : '';
+  return `<p class="sum" style="margin-top:0">Roz ki reminder list khud banti hai — koi paid service nahi. Ek-ek karke WhatsApp dabao, message pehle se type milega; bhejte hi naam list se hat jayega.</p>
+    <div class="sechd"><h2>Aaj ke reminders (${q.length})</h2><span class="mini">${done.length}/${q.length} bheje</span></div>
+    <div style="height:8px;border-radius:6px;background:var(--card2);overflow:hidden;margin:2px 0 8px"><div style="height:100%;width:${pct}%;background:var(--grad)"></div></div>
+    ${q.length === 0 ? '<div class="list"><div class="empty">Aaj koi reminder nahi hai. 🎉</div></div>' : ''}
+    ${next ? nextCard : (q.length ? '<div class="list"><div class="empty">Aaj ke saare reminders bhej diye. 🎉</div></div>' : '')}
+    ${left.length > 1 ? sec('Bache hue', left.slice(1)) : ''}
+    ${sec('Aaj bhej diye', done)}`;
 }
 
 /* ---------- reports ---------- */
@@ -1139,6 +1166,7 @@ const actions = {
   tab: el => go(el.dataset.k),
   goFilter: el => { ui.filter = el.dataset.f; go('members'); },
   goFees: () => { ui.feeTab = 'pending'; go('fees'); },
+  goRemind: () => { ui.feeTab = 'remind'; go('fees'); },
   filter: el => { ui.filter = el.dataset.f; render(); },
   feeTab: el => { ui.feeTab = el.dataset.k; render(); },
   attMode: el => { ui.attMode = el.dataset.k; render(); },
@@ -1189,7 +1217,13 @@ const actions = {
   wa: el => {
     const m = getM(el.dataset.id); if (!m) return;
     if (!/^\d{10}$/.test(m.mobile || '')) return toast('Is member ka mobile number sahi nahi hai', true);
-    openWA(waLink(m, el.dataset.k || 'exp'));
+    const k = el.dataset.k || 'exp';
+    openWA(waLink(m, k));
+    if (k === 'exp' || k === 'due') { // reminder bhej diya — aaj ki list me nishan lagao
+      m.rem = { d: today(), k };
+      save();
+      if (ui.tab === 'fees' && ui.feeTab === 'remind') render();
+    }
   },
   att: el => {
     const m = getM(el.dataset.id), r = checkIn(m);
