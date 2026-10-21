@@ -168,6 +168,7 @@ function render() {
   v.classList.remove('vin'); void v.offsetWidth; v.classList.add('vin');
   animCount();
   resumeCam();
+  if (ui.tab === 'attendance') { if (ui.attMode === 'monthly') loadAttMonth(); else if (ui.attMode === 'today') loadAttDay(); }
 }
 function go(tab) { ui.tab = tab; render(); window.scrollTo(0, 0); }
 
@@ -772,7 +773,7 @@ function attendanceRangeRows(from, to) {
   return { rows, count: n };
 }
 /* Settings > Export: type + period (month-wise ya date range) */
-function doExport() {
+async function doExport() {
   const type = ($('#expType') || {}).value || 'members';
   if (type === 'members') return exportMembers();
   if (type === 'feesdue') return exportPending();
@@ -793,11 +794,11 @@ function doExport() {
     return download(`gym-payments-${from}-to-${to}.csv`, csv(r.rows));
   }
   if (type === 'attendance') {
-    const r = attendanceRangeRows(from, to);
+    const r = await attRowsForExport(from, to);
     if (!r.count) return toast('Is period me attendance nahi hai', true);
     return download(`gym-attendance-${from}-to-${to}.csv`, csv(r.rows));
   }
-  const pr = paymentsRows(from, to), ar = attendanceRangeRows(from, to);
+  const pr = paymentsRows(from, to), ar = await attRowsForExport(from, to);
   const rows = [[db.gym.name || 'Gym', 'All data export', `${from} to ${to}`], [],
     ['=== MEMBERS ==='], ...membersRows(), [],
     ['=== FEES DUE ==='], ...pendingRows(), [],
@@ -814,6 +815,70 @@ function exportAttendance() {
   r.rows.forEach(x => rows.push([x.m.name, txt(x.m.mobile), ...x.marks.map(p => p ? 'P' : ''), x.c]));
   rows.push(['Total check-ins', '', ...r.dayTotals, r.total]);
   download(`gym-attendance-${ui.attMonth}.csv`, csv(rows));
+}
+
+/* ---------- purani attendance (45-din window se bahar) server se ---------- */
+function monthBounds(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  const last = new Date(y, m, 0).getDate();
+  return [ym + '-01', `${y}-${String(m).padStart(2, '0')}-${String(last).padStart(2, '0')}`];
+}
+function mergeChk(list) {
+  (list || []).forEach(d => {
+    const day = (db.checkins[d.date] = db.checkins[d.date] || {});
+    const bag = {};
+    [...(day[d.mid] || []), ...(d.v || [])].forEach(x => { if (!bag[x.s] || x.t < bag[x.s].t) bag[x.s] = x; });
+    day[d.mid] = Object.values(bag).sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0));
+    const a = (db.attendance[d.date] = db.attendance[d.date] || []);
+    if (!a.includes(d.mid)) a.push(d.mid);
+  });
+}
+async function loadAttMonth() {
+  if (!(window.cloud && cloud.enabled && cloud.fetchChk)) return;
+  const ym = ui.attMonth, [from, to] = monthBounds(ym);
+  if (from > addDays(today(), -40)) return; // window ke andar ka data local hi hai
+  const body = $('#attBody'); if (!body) return;
+  body.innerHTML = '<div class="empty">Purana data server se load ho raha hai...</div>';
+  try {
+    const list = await cloud.fetchChk(from, addDays(to, 1));
+    if (!list || ui.attMonth !== ym || ui.attMode !== 'monthly' || !$('#attBody')) return;
+    mergeChk(list);
+    $('#attBody').innerHTML = attMonthly();
+  } catch (e) { if (ui.attMonth === ym && $('#attBody')) $('#attBody').innerHTML = attMonthly(); }
+}
+async function loadAttDay() {
+  if (!(window.cloud && cloud.enabled && cloud.fetchChk)) return;
+  const d = ui.attDate;
+  if (d > addDays(today(), -40)) return;
+  const body = $('#attBody'); if (!body) return;
+  body.innerHTML = '<div class="empty">Purana data server se load ho raha hai...</div>';
+  try {
+    const list = await cloud.fetchChk(d, addDays(d, 1));
+    if (!list || ui.attDate !== d || ui.attMode !== 'today' || !$('#attBody')) return;
+    mergeChk(list);
+    $('#attBody').innerHTML = attDailyList();
+  } catch (e) { if (ui.attDate === d && $('#attBody')) $('#attBody').innerHTML = attDailyList(); }
+}
+function rowsFromChkList(list, from, to) {
+  const byDate = {};
+  (list || []).forEach(d => { (byDate[d.date] = byDate[d.date] || {})[d.mid] = d.v || []; });
+  const rows = [['Date', 'Member', 'Mobile', 'Morning', 'Evening']];
+  let n = 0;
+  for (let d = from; d <= to; d = addDays(d, 1)) {
+    const day = byDate[d] || {};
+    Object.keys(day).filter(getM).sort((x, y) => getM(x).name.localeCompare(getM(y).name)).forEach(id => {
+      const m = getM(id), v = day[id];
+      const t = s => (v.find(x => x.s === s) || {}).t || 'Present';
+      rows.push([d, m.name, txt(m.mobile), t('M'), t('E')]); n++;
+    });
+  }
+  return { rows, count: n };
+}
+async function attRowsForExport(from, to) {
+  if (window.cloud && cloud.enabled && cloud.fetchChk) {
+    try { const list = await cloud.fetchChk(from, addDays(to, 1)); if (list) return rowsFromChkList(list, from, to); } catch (e) {}
+  }
+  return attendanceRangeRows(from, to);
 }
 
 /* ---------- sheets and forms ---------- */
@@ -1209,8 +1274,8 @@ document.addEventListener('change', e => {
       $('#photoPrev').innerHTML = `<span class="av active" style="--sz:72px;--c:var(--blue)"><img src="${url}" alt=""></span>`;
     }).catch(() => toast('Could not read this photo', true));
     t.value = '';
-  } else if (t.id === 'attDate') { ui.attDate = t.value || today(); $('#attBody').innerHTML = attDailyList(); }
-  else if (t.id === 'attMonth') { ui.attMonth = t.value || ui.attMonth; $('#attBody').innerHTML = attMonthly(); }
+  } else if (t.id === 'attDate') { ui.attDate = t.value || today(); $('#attBody').innerHTML = attDailyList(); loadAttDay(); }
+  else if (t.id === 'attMonth') { ui.attMonth = t.value || ui.attMonth; $('#attBody').innerHTML = attMonthly(); loadAttMonth(); }
   else if (t.id === 'repDate') { ui.repDate = t.value || ui.repDate; render(); }
   else if (t.id === 'repMonth') { ui.repMonth = t.value || ui.repMonth; render(); }
   else if (t.id === 'expMode') { const m = t.value === 'month'; if ($('#expMonthWrap')) $('#expMonthWrap').hidden = !m; if ($('#expRangeWrap')) $('#expRangeWrap').hidden = m; }

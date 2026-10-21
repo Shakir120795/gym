@@ -353,6 +353,21 @@
     if (!session) showLogin(); else start();
   }
 
-  window.cloud = { enabled, sync, touch, logout, statusText, retry, init, get state() { return state; }, get booted() { return booted; }, get gymId() { return gymId(); }, get license() { return licenseInfo(); } };
+  /* Purane check-ins (45-din window se bahar ke) server se laana — sirf
+     padhne ke liye. Records ki id 'YYYY-MM-DD|memberId' se shuru hoti hai,
+     isliye date range id par hi lag jata hai. */
+  async function fetchChk(from, toNext) {
+    if (!enabled || !session) return null;
+    let all = [], off = 0;
+    for (;;) {
+      const rows = await api('GET', `/rest/v1/records?select=id,data&gym_id=eq.${encodeURIComponent(gymId())}&kind=eq.chk&deleted=eq.false&id=gte.${encodeURIComponent(from)}&id=lt.${encodeURIComponent(toNext)}&order=id.asc&limit=1000&offset=${off}`);
+      all = all.concat(rows || []);
+      if (!rows || rows.length < 1000) break;
+      off += 1000;
+    }
+    return all.map(r => r.data).filter(d => d && d.date && d.mid);
+  }
+
+  window.cloud = { enabled, sync, touch, logout, statusText, retry, init, fetchChk, get state() { return state; }, get booted() { return booted; }, get gymId() { return gymId(); }, get license() { return licenseInfo(); } };
   init();
 })();
