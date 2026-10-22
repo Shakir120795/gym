@@ -792,14 +792,14 @@ function readBackupFile(f) {
     if (!d || !Array.isArray(d.members) || !Array.isArray(d.payments)) return toast('This is not a valid backup file', true);
     pendingRestore = d;
     openSheet('Restore backup?', `
-      <p style="margin:0 0 6px">Backup file me hai:</p>
-      <p class="mini" style="margin:0 0 10px">Gym: <b>${esc((d.gym && d.gym.name) || '-')}</b> · Members: <b>${d.members.length}</b> · Payments: <b>${d.payments.length}</b>${p.exportedAt ? `<br>Backup ki date: ${esc(String(p.exportedAt).slice(0, 10))}` : ''}</p>
+      <p style="margin:0 0 6px">The backup file has:</p>
+      <p class="mini" style="margin:0 0 10px">Gym: <b>${esc((d.gym && d.gym.name) || '-')}</b> · Members: <b>${d.members.length}</b> · Payments: <b>${d.payments.length}</b>${p.exportedAt ? `<br>Backup date: ${esc(String(p.exportedAt).slice(0, 10))}` : ''}</p>
       <p style="margin:0 0 6px">Current data has: <b>${db.members.length}</b> members · <b>${db.payments.length}</b> payments</p>
       <p class="mini" style="margin:0 0 6px;color:var(--red)">Restoring will REPLACE all current data with this backup. This cannot be undone.</p>
       <div class="actions"><button class="btn danger" data-act="doRestore">Yes, restore</button><button class="btn ghost" data-act="closeSheet">Cancel</button></div>`);
   };
-  if (f.text) f.text().then(done).catch(() => toast('File padh nahi paya', true));
-  else { const r = new FileReader(); r.onload = () => done(r.result); r.onerror = () => toast('File padh nahi paya', true); r.readAsText(f); }
+  if (f.text) f.text().then(done).catch(() => toast('Could not read the file', true));
+  else { const r = new FileReader(); r.onload = () => done(r.result); r.onerror = () => toast('Could not read the file', true); r.readAsText(f); }
 }
 function paymentsRows(from, to) {
   const ps = db.payments.filter(p => p.date >= from && p.date <= to).slice().sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
@@ -888,9 +888,9 @@ async function loadAttMonth() {
   if (previewMode) return;
   if (!(window.cloud && cloud.enabled && cloud.fetchChk)) return;
   const ym = ui.attMonth, [from, to] = monthBounds(ym);
-  if (from > addDays(today(), -40)) return; // window ke andar ka data local hi hai
+  if (from > addDays(today(), -40)) return; // data inside the window is already local
   const body = $('#attBody'); if (!body) return;
-  body.innerHTML = '<div class="empty">Purana data server se load ho raha hai...</div>';
+  body.innerHTML = '<div class="empty">Loading older data from the server...</div>';
   try {
     const list = await cloud.fetchChk(from, addDays(to, 1));
     if (!list || ui.attMonth !== ym || ui.attMode !== 'monthly' || !$('#attBody')) return;
@@ -904,7 +904,7 @@ async function loadAttDay() {
   const d = ui.attDate;
   if (d > addDays(today(), -40)) return;
   const body = $('#attBody'); if (!body) return;
-  body.innerHTML = '<div class="empty">Purana data server se load ho raha hai...</div>';
+  body.innerHTML = '<div class="empty">Loading older data from the server...</div>';
   try {
     const list = await cloud.fetchChk(d, addDays(d, 1));
     if (!list || ui.attDate !== d || ui.attMode !== 'today' || !$('#attBody')) return;
@@ -1076,13 +1076,13 @@ function settingsSheet() {
       <h3 style="font-size:20px;margin:4px 0 8px">Export data (Excel)</h3>
       <p class="mini" style="margin:0 0 10px">Choose the data you need. The file downloads as CSV and opens directly in Excel.</p>
       <label>Data type<select id="expType">
-        <option value="members">Members (sab)</option>
+        <option value="members">Members (all)</option>
         <option value="feesdue">Fees due (pending)</option>
         <option value="attendance">Attendance</option>
         <option value="payments">Payments / collection</option>
-        <option value="all">All data (sab kuch ek file me)</option>
+        <option value="all">All data (everything in one file)</option>
       </select></label>
-      <label>Period<select id="expMode"><option value="month">Month-wise</option><option value="range">Date range (date se date tak)</option></select></label>
+      <label>Period<select id="expMode"><option value="month">Month-wise</option><option value="range">Date range</option></select></label>
       <label id="expMonthWrap">Month<input type="month" id="expMonth" value="${today().slice(0, 7)}"></label>
       <div class="two" id="expRangeWrap" hidden><label>From date<input type="date" id="expFrom" value="${today().slice(0, 8)}01"></label><label>To date<input type="date" id="expTo" value="${today()}"></label></div>
       <p class="mini">Members and Fees due are always current — the period applies only to Attendance, Payments and All data.</p>
@@ -1090,7 +1090,7 @@ function settingsSheet() {
     ${panel('backup', `
       <h3 style="font-size:20px;margin:4px 0 8px">Data backup</h3>
       <p class="mini" style="margin:0 0 10px">The complete gym data in one file — members, payments, attendance, plans and settings. Keep the file safe with you; if data ever gets corrupted, it can be restored from this file.</p>
-      <p class="mini" style="margin:0 0 10px">Is samay: <b>${db.members.length}</b> members · <b>${db.payments.length}</b> payments</p>
+      <p class="mini" style="margin:0 0 10px">Right now: <b>${db.members.length}</b> members · <b>${db.payments.length}</b> payments</p>
       <button class="btn primary wide" data-act="dlBackup">Download full backup (All data)</button>
       <hr>
       <h3 style="font-size:20px;margin:0 0 8px">Restore backup</h3>
@@ -1099,7 +1099,7 @@ function settingsSheet() {
       <button class="btn ghost wide" data-act="pickBackup">Backup file chuno (Restore)</button>`)}
     ${panel('privacy', `
       <h3 style="font-size:20px;margin:4px 0 8px">Privacy</h3>
-      <p class="mini" style="margin:0 0 8px"><b>Tumhara data, tumhara hai.</b> Gym ka data (members, payments, attendance) secure cloud me save hota hai, taaki phone badalne ya kharab hone par bhi data na khoye.</p>
+      <p class="mini" style="margin:0 0 8px"><b>Your data, in your hands.</b> Your gym's data (members, payments, attendance) is saved in a secure cloud, so it is never lost even if you change or lose your phone.</p>
       <p class="mini" style="margin:0 0 8px"><b>Who can see the data?</b> Only your gym's login can open your gym's data. No other gym can see your data. Nobody can see your password — not even the app maker; it can only be reset.</p>
       <p class="mini" style="margin:0 0 8px"><b>You stay in control:</b> You can take a full backup and exports from Settings any time. If you want to close the app, just say so — your data will be deleted.</p>
       <p class="mini" style="margin:0">Data is never sold and never shared with advertisers.${support ? ` Questions? WhatsApp: ${esc(support)}` : ''}</p>`)}

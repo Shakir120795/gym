@@ -207,7 +207,7 @@ document.addEventListener('click', async e => {
   } else if (act === 'setPw') {
     const pw = prompt(`Type a new password for ${b.dataset.e} (at least 6 characters):`);
     if (!pw) return;
-    try { await call('setPassword', { userId: b.dataset.u, password: pw }); alert('Password badal gaya. Owner ko naya password bata do.'); }
+    try { await call('setPassword', { userId: b.dataset.u, password: pw }); alert('Password changed. Tell the owner the new password.'); }
     catch (err) { alert(err.message); }
   } else if (act === 'delUser') {
     const gym = gyms.find(g => g.users.some(u => u.id === b.dataset.u));
@@ -226,7 +226,7 @@ document.addEventListener('click', async e => {
 $('#loginForm').addEventListener('submit', async e => {
   e.preventDefault();
   const f = new FormData(e.target), msg = $('#msg');
-  msg.textContent = 'Login ho raha hai...';
+  msg.textContent = 'Signing in...';
   try {
     await authReq('password', { email: f.get('email').trim(), password: f.get('password') });
     await loadGyms(); // this also checks whether the caller is an admin
@@ -239,7 +239,7 @@ $('#loginForm').addEventListener('submit', async e => {
 $('#demoForm').addEventListener('submit', async e => {
   e.preventDefault();
   const f = new FormData(e.target), msg = $('#demoMsg');
-  msg.textContent = 'Gym ban raha hai...';
+  msg.textContent = 'Creating the gym...';
   try {
     const j = await call('createDemo', { gymName: f.get('gymName'), email: f.get('email'), password: f.get('password'), plan: f.get('plan') || 'trial' });
     msg.textContent = '';
