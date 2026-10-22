@@ -110,16 +110,16 @@
     const info = licenseInfo();
     const title = q('#lockTitle'), msg = q('#lockMsg');
     const planOver = info.kind === 'plan';
-    if (title) title.textContent = planOver ? 'Plan khatam' : 'Demo over';
+    if (title) title.textContent = planOver ? 'Plan ended' : 'Demo over';
     if (msg) msg.textContent = planOver
-      ? 'Aapke gym ka plan khatam ho gaya hai. Renew karne ke liye message karo — payment ke baad app yahin se dobara chalu ho jayega aur aapka saara data safe rahega.'
-      : 'Aapka demo period khatam ho gaya hai. App activate karne ke liye message karo — payment ke baad app yahin se unlock ho jayega aur aapka saara data safe rahega.';
+      ? 'Your gym\'s plan has ended. Message us to renew — after payment the app will start again right here and all your data stays safe.'
+      : 'Your demo period is over. Message us to activate the app — after payment it will unlock right here and all your data stays safe.';
     const wa = q('#lockWa');
     if (wa) {
       const sp = (C.support || '').replace(/\D/g, '');
       const text = planOver
-        ? 'Mujhe Gym Manager app ka plan renew karna hai. Meri gym id: ' + gymId()
-        : 'Mujhe Gym Manager app activate karna hai. Meri gym id: ' + gymId();
+        ? 'I want to renew my Gym Manager app plan. My gym id: ' + gymId()
+        : 'I want to activate the Gym Manager app. My gym id: ' + gymId();
       if (sp) wa.href = 'https://wa.me/' + (sp.length === 10 ? '91' + sp : sp) + '?text=' + encodeURIComponent(text);
       wa.hidden = !sp;
     }
@@ -234,7 +234,7 @@
   /* ---------- the sync cycle ---------- */
   function goOffline(msg) {
     setState('offline');
-    showBlock('No internet', msg || 'Ye app bina internet ke nahi chalti. Connection on karke Retry dabao.', true);
+    showBlock('No internet', msg || 'This app does not work without internet. Turn on your connection and tap Retry.', true);
   }
   async function sync() {
     if (!enabled || !session || !booted) return;
@@ -299,11 +299,11 @@
     try {
       hideLogin(); hideBlock(); setState('loading');
       if (!gymId()) {
-        // Login hai, par kisi gym se juda nahi (jaise admin/panel wala
-        // email). Koi data nahi khulega — seedha login screen + wajah.
+        // Signed in, but no gym is linked (e.g. the admin/panel email).
+        // No data opens — straight back to the login screen with the reason.
         requireLogin();
         const lm = q('#loginMsg');
-        if (lm) lm.textContent = 'Is email ke saath koi gym juda nahi hai. Apne gym wale email se login karo — admin/panel wala email app ke liye nahi hai.';
+        if (lm) lm.textContent = 'No gym is linked with this email. Log in with your gym email — the admin/panel email is not for the app.';
         return;
       }
       const net = await checkNet();
@@ -327,7 +327,7 @@
     setState(state);
     if (!enabled) {
       setState('setup');
-      showBlock('Setup required', 'Cloud database abhi connect nahi hai. Owner se config.js mein Supabase details dalwao. Bina iske app nahi chalegi.', false);
+      showBlock('Setup required', 'The cloud database is not connected yet. Ask the owner to add the Supabase details in config.js. The app cannot work without it.', false);
       return;
     }
     const form = q('#loginForm');
@@ -346,16 +346,16 @@
     const lo = q('#lockLogout');
     if (lo) lo.addEventListener('click', () => { hideLock(); logout(); });
     window.addEventListener('online', () => { if (!session) return; if (!booted) start(); else sync(); });
-    window.addEventListener('offline', () => { if (session) goOffline('Connection chali gayi hai. Wapas aane ka wait karo ya Retry dabao.'); });
+    window.addEventListener('offline', () => { if (session) goOffline('Connection lost. Wait for it to come back or tap Retry.'); });
     document.addEventListener('visibilitychange', () => { if (!document.hidden && session && booted) sync(); });
     window.addEventListener('pagehide', () => { if (session && booted && !running) { clearTimeout(deb); sync(); } });
     setInterval(() => { if (!document.hidden && session && booted) sync(); }, POLL_MS);
     if (!session) { if (window.startPreview) window.startPreview(); else showLogin(); } else start();
   }
 
-  /* Purane check-ins (45-din window se bahar ke) server se laana — sirf
-     padhne ke liye. Records ki id 'YYYY-MM-DD|memberId' se shuru hoti hai,
-     isliye date range id par hi lag jata hai. */
+  /* Fetch older check-ins (outside the 45-day window) from the server —
+     read-only. Record ids start with 'YYYY-MM-DD|memberId', so the date
+     range applies directly on the id. */
   async function fetchChk(from, toNext) {
     if (!enabled || !session) return null;
     let all = [], off = 0;

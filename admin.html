@@ -57,7 +57,7 @@
   <div id="loginView" hidden>
     <div class="card">
       <h1 style="font-size:30px">Gym Manager — Admin</h1>
-      <p class="small">Sirf super admin ke liye. Apne admin email/password se login karo.</p>
+      <p class="small">Super admin only. Log in with your admin email and password.</p>
       <form id="loginForm" autocomplete="on">
         <label>Email<input name="email" type="email" required autocomplete="username"></label>
         <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
@@ -78,22 +78,22 @@
     <p class="small" id="whoLine" style="margin-top:-8px"></p>
 
     <div class="rowbtns" style="margin-bottom:16px">
-      <button class="btn primary" data-atab="gyms" id="tabBtnGyms">Saare Gyms</button>
-      <button class="btn" data-atab="new" id="tabBtnNew">+ Naya Gym Banao</button>
+      <button class="btn primary" data-atab="gyms" id="tabBtnGyms">All Gyms</button>
+      <button class="btn" data-atab="new" id="tabBtnNew">+ Create New Gym</button>
     </div>
 
     <div id="tabGyms">
       <div id="alertStrip"></div>
       <div class="stats" id="statStrip"></div>
-      <h2 style="font-size:22px;margin:16px 0 10px">Saare gyms</h2>
+      <h2 style="font-size:22px;margin:16px 0 10px">All gyms</h2>
       <div id="gymList"><div class="empty">Loading...</div></div>
     </div>
 
     <div id="tabNew" hidden>
     <div class="card">
-      <h2 style="font-size:22px">Naya gym — trial ya seedha paid</h2>
+      <h2 style="font-size:22px">New gym — trial or direct paid</h2>
       <form id="demoForm" autocomplete="off">
-        <label>Gym ka naam<input name="gymName" required placeholder="e.g. Power House Gym"></label>
+        <label>Gym name<input name="gymName" required placeholder="e.g. Power House Gym"></label>
         <label>Owner ka email<input name="email" type="email" required placeholder="owner@example.com"></label>
         <label>Owner ka password
           <span style="display:flex;gap:8px"><input name="password" id="demoPw" required minlength="6" placeholder="Login password">
@@ -109,7 +109,7 @@
             <option value="lifetime">Lifetime (paid)</option>
           </select>
         </label>
-        <button class="btn primary wide">Gym banao</button>
+        <button class="btn primary wide">Create gym</button>
         <p id="demoMsg" role="alert"></p>
       </form>
       <div id="demoResult" hidden></div>

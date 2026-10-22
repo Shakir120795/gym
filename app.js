@@ -51,14 +51,22 @@ const getM = id => db.members.find(m => m.id === id);
 const SESS = { M: 'Morning', E: 'Evening' };
 const nowTime = () => { const d = new Date(); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
 const sessionOf = t => (+t.slice(0, 2) < (db.gym.eveningFrom || 12) ? 'M' : 'E');
-function checkIn(m, date = today(), time = nowTime()) {
+const minsBetween = (a, b) => { const [h1, m1] = a.split(':').map(Number), [h2, m2] = b.split(':').map(Number); return (h2 * 60 + m2) - (h1 * 60 + m1); };
+const durText = (a, b) => { const m = minsBetween(a, b); if (m <= 0) return '0m'; const h = Math.floor(m / 60), r = m % 60; return h ? (r ? h + 'h ' + r + 'm' : h + 'h') : r + 'm'; };
+function scanToggle(m, date = today(), time = nowTime()) {
   const day = (db.checkins[date] = db.checkins[date] || {}), list = (day[m.id] = day[m.id] || []);
+  const open = list.find(x => !x.o);
+  if (open) { open.o = time; save(); return { exit: true, s: open.s, t: open.t, o: time }; }
   const s = sessionOf(time), ex = list.find(x => x.s === s);
-  if (ex) return { already: true, s, t: ex.t };
+  if (ex) return { already: true, s, t: ex.t, o: ex.o };
   list.push({ s, t: time }); list.sort((a, b) => a.t.localeCompare(b.t));
   const a = (db.attendance[date] = db.attendance[date] || []);
   if (!a.includes(m.id)) a.push(m.id);
-  save(); return { already: false, s, t: time };
+  save(); return { entry: true, s, t: time };
+}
+function insideNow() {
+  const day = db.checkins[today()] || {};
+  return Object.keys(day).filter(id => getM(id) && (day[id] || []).some(x => !x.o)).length;
 }
 function dayCounts(date = today()) {
   const day = db.checkins[date] || {}, ids = new Set([...(db.attendance[date] || []), ...Object.keys(day)].filter(getM));
@@ -66,7 +74,7 @@ function dayCounts(date = today()) {
   ids.forEach(id => (day[id] || []).forEach(x => x.s === 'M' ? M++ : E++));
   return { members: ids.size, M, E };
 }
-const countsLine = (c = dayCounts()) => `<b>${c.members}</b> members came today, morning ${c.M}, evening ${c.E}`;
+const countsLine = (c = dayCounts()) => `<b>${c.members}</b> members came today, morning ${c.M}, evening ${c.E} · <b>${insideNow()}</b> inside now`;
 const daysInMonth = ym => new Date(+ym.slice(0, 4), +ym.slice(5), 0).getDate();
 
 const I = {
@@ -200,11 +208,11 @@ function trialBanner() {
   if (!L) return '';
   if (L.status === 'trial') {
     const txt = L.daysLeft > 0 ? `Demo version — ${L.daysLeft} day${L.daysLeft === 1 ? '' : 's'} left` : 'Demo version — last day today';
-    return `<div class="tag expiring" style="display:block;text-align:center;padding:9px 12px;margin-bottom:10px;font-size:13px">${txt}. Activate karne ke liye app provider se contact karo.</div>`;
+    return `<div class="tag expiring" style="display:block;text-align:center;padding:9px 12px;margin-bottom:10px;font-size:13px">${txt}. Contact the app provider to activate.</div>`;
   }
   if (L.status === 'active' && L.ends && L.daysLeft != null && L.daysLeft <= 30) {
-    const txt = L.daysLeft > 0 ? `${L.plan || 'Plan'} — ${L.daysLeft} din bache hain` : `${L.plan || 'Plan'} — aaj last day hai`;
-    return `<div class="tag expiring" style="display:block;text-align:center;padding:9px 12px;margin-bottom:10px;font-size:13px">${txt}. Renew karne ke liye app provider se contact karo.</div>`;
+    const txt = L.daysLeft > 0 ? `${L.plan || 'Plan'} — ${L.daysLeft} day${L.daysLeft === 1 ? '' : 's'} left` : `${L.plan || 'Plan'} — last day today`;
+    return `<div class="tag expiring" style="display:block;text-align:center;padding:9px 12px;margin-bottom:10px;font-size:13px">${txt}. Contact the app provider to renew.</div>`;
   }
   return '';
 }
@@ -237,7 +245,7 @@ function viewHome() {
     <button class="btn primary" data-act="add">${ic('plus', 20)} Add member</button>
     <button class="btn" data-act="tab" data-k="attendance">${ic('check', 20)} Scan entry</button>
   </div>
-  ${remLeft ? `<button class="btn wide" data-act="goRemind" style="margin-top:10px">${ic('bell', 18)} Aaj ke reminders — ${remLeft} bache hain</button>` : ''}
+  ${remLeft ? `<button class="btn wide" data-act="goRemind" style="margin-top:10px">${ic('bell', 18)} Today's reminders — ${remLeft} left</button>` : ''}
   <h2>Membership ending soon</h2>
   ${soon.length ? `<div class="list">${soon.slice(0, 6).map(memberRow).join('')}</div>${soon.length > 6 ? `<p class="mini">${soon.length - 6} more in Fees \u2192 Reminders</p>` : ''}`
       : `<div class="list"><div class="empty">${ms.length ? 'No memberships ending soon.' : 'Add your first member to get started.'}</div></div>`}
@@ -305,7 +313,7 @@ function viewFees() {
 }
 
 /* ---------- attendance ---------- */
-const visitTags = (v = []) => v.map(x => `<span class="tag ${x.s === 'M' ? 'expiring' : 'active'}">${SESS[x.s]} ${x.t}</span>`).join(' ');
+const visitTags = (v = []) => v.map(x => `<span class="tag ${x.s === 'M' ? 'expiring' : 'active'}">${SESS[x.s]} ${x.t}${x.o ? '–' + x.o + ' (' + durText(x.t, x.o) + ')' : ' • Inside'}</span>`).join(' ');
 const manualOpen = () => Date.now() < (ui.manualUntil || 0) && ui.attDate === today();
 function attDailyList() {
   const d = ui.attDate, day = db.checkins[d] || {}, c = dayCounts(d);
@@ -352,7 +360,7 @@ function viewAttendance() {
     <button class="btn primary wide" style="margin-top:0" data-act="camToggle" id="camBtn">Start camera</button>
     <button class="btn ghost wide" style="margin-top:8px" data-act="camFlip" id="camFlipBtn">${faceBtnTxt()}</button>
     <p class="sum" id="scanCount" style="margin-top:14px">${countsLine()}</p>
-    <p class="mini">Keep this screen open on the gate phone. The camera starts by itself and keeps scanning one member after another. Each member can check in once in the morning and once in the evening.</p>
+    <p class="mini">Keep this screen open on the gate phone. The camera starts by itself and keeps scanning. The same QR card works for entry and exit: first scan of a session marks entry, the next scan marks exit with the visit duration.</p>
     ${window.GYM_PREVIEW ? `<hr><label class="mini">Test without camera
       <select id="simSel" style="width:100%;padding:10px;margin-top:4px">${db.members.map(m => `<option value="${m.id}">${esc(m.name)} (${status(m).key})</option>`).join('')}</select></label>
       <button class="btn ghost wide" data-act="simScan">Simulate scan</button>` : ''}`;
@@ -360,7 +368,7 @@ function viewAttendance() {
 
 /* ---------- QR scanner ---------- */
 const scan = { stream: null, timer: 0, last: '', lastAt: 0, hide: 0, face: 'environment' };
-function faceBtnTxt() { return scan.face === 'user' ? '🔁 Back camera use karo' : '🔁 Front camera use karo'; }
+function faceBtnTxt() { return scan.face === 'user' ? '🔁 Use back camera' : '🔁 Use front camera'; }
 function setCamFaceUI(v) {
   if (v) v.style.transform = scan.face === 'user' ? 'scaleX(-1)' : '';
   const fb = $('#camFlipBtn'); if (fb) fb.textContent = faceBtnTxt();
@@ -431,11 +439,13 @@ function speak(text) {
 const VOICE = {
   en: {
     welcome: n => `Welcome ${n}.`,
+    exit: (n, d) => `${n}, exit marked. You were in the gym for ${d}.`,
     ends: d => `Your membership ends ${d === 0 ? 'today' : d === 1 ? 'tomorrow' : 'in ' + d + ' days'}. Please renew.`,
     expired: n => `${n}, your membership has expired.`, dup: n => `${n}, already checked in.`, bad: () => 'Invalid QR code.',
   },
   hi: {
     welcome: n => `स्वागत है ${n}.`,
+    exit: (n, d) => `${n}, आपकी एग्ज़िट हो गई। आप ${d} जिम में रहे।`,
     ends: d => `आपकी मेंबरशिप ${d === 0 ? 'आज' : d === 1 ? 'कल' : d + ' दिन में'} खत्म हो रही है। कृपया रिन्यू कराएं।`,
     expired: n => `${n}, आपकी मेंबरशिप खत्म हो चुकी है।`, dup: n => `${n}, आपकी एंट्री पहले ही हो चुकी है।`, bad: () => 'गलत क्यू आर कोड।',
   },
@@ -463,8 +473,12 @@ function onScan(data) {
   if (m.token !== tok) { beep(false); speak(VL().bad()); return showRes('stop', m, esc(m.name), ['This is an old QR card.', 'Please use the latest QR card from the gym.']); }
   const s = status(m);
   if (s.key === 'expired') { beep(false); speak(VL().expired(m.name)); return showRes('stop', m, esc(m.name), [`Membership ended on ${fmtDate(m.expiry)}.`, 'Entry not allowed. Please renew first.'], true); }
-  const r = checkIn(m);
-  if (r.already) { beep(false); speak(VL().dup(m.name)); return showRes('dup', m, esc(m.name), [`Already checked in for ${SESS[r.s].toLowerCase()} at ${r.t}.`]); }
+  const r = scanToggle(m);
+  if (r.exit) {
+    beep(true); speak(VL().exit(m.name, durText(r.t, r.o)));
+    return showRes('ok', m, esc(m.name), [`Exit marked at ${r.o}`, `${SESS[r.s]} visit: ${r.t} – ${r.o} (${durText(r.t, r.o)})`]);
+  }
+  if (r.already) { beep(false); speak(VL().dup(m.name)); return showRes('dup', m, esc(m.name), [r.o ? `Already visited this ${SESS[r.s].toLowerCase()} session: ${r.t} – ${r.o}.` : `Already checked in for ${SESS[r.s].toLowerCase()} at ${r.t}.`]); }
   beep(true);
   const lines = [`${SESS[r.s]} entry at ${r.t}`];
   if (s.key === 'expiring') lines.push(`Membership ends ${s.left === 0 ? 'today' : 'in ' + s.left + ' days'} (${fmtDate(m.expiry)}). Please renew.`);
@@ -633,9 +647,9 @@ function reminderQueue() {
   db.members.forEach(m => {
     const left = daysBetween(t, m.expiry);
     let kind = null, prio = 9;
-    if (m.expiry < t) { kind = 'exp'; prio = 0; }              // khatam ho gaya
-    else if (left < warnDays()) { kind = 'exp'; prio = 1; }   // khatam hone wala
-    else if ((m.due || 0) > 0) { kind = 'due'; prio = 2; }    // fees baki
+    if (m.expiry < t) { kind = 'exp'; prio = 0; }              // already expired
+    else if (left < warnDays()) { kind = 'exp'; prio = 1; }   // ending soon
+    else if ((m.due || 0) > 0) { kind = 'due'; prio = 2; }    // fees due
     if (kind) items.push({ m, kind, prio, sent: !!(m.rem && m.rem.d === t) });
   });
   items.sort((a, b) => a.prio - b.prio
@@ -648,7 +662,7 @@ function remRow(m, kind, sent) {
   const s = status(m);
   return `<div class="row" ${sent ? 'style="opacity:.55"' : ''}>${avatar(m, 40)}
     <button class="who" style="background:none;border:0;text-align:left;padding:0" data-act="member" data-id="${m.id}"><b>${esc(m.name)}</b><small>${kind === 'due' ? 'Pending ' + inr(m.due) : (s.key === 'expired' ? 'Ended ' : 'Ends ') + fmtDate(m.expiry)}</small></button>
-    ${sent ? '<span class="mini" style="color:var(--green);font-weight:700;white-space:nowrap">✓ Bhej diya</span>' : ''}
+    ${sent ? '<span class="mini" style="color:var(--green);font-weight:700;white-space:nowrap">✓ Sent</span>' : ''}
     <span class="acts"><a class="ib" href="tel:${esc(m.mobile)}" aria-label="Call ${esc(m.name)}">${ic('phone', 20)}</a>
     <button class="ib" data-act="wa" data-id="${m.id}" data-k="${kind}" aria-label="WhatsApp ${esc(m.name)}">${ic('chat', 20)}</button>
     <button class="ib txt" data-act="${kind === 'due' ? 'collect' : 'renew'}" data-id="${m.id}">${kind === 'due' ? 'Collect' : 'Renew'}</button></span></div>`;
@@ -659,18 +673,18 @@ function viewReminders() {
   const pct = q.length ? Math.round(done.length * 100 / q.length) : 100;
   const next = left[0];
   const sec = (title, arr) => arr.length ? `<div class="sechd"><h2>${title} (${arr.length})</h2></div><div class="list">${arr.map(x => remRow(x.m, x.kind, x.sent)).join('')}</div>` : '';
-  const nextCard = next ? `<div class="sechd"><h2>Agla reminder</h2></div>
+  const nextCard = next ? `<div class="sechd"><h2>Next reminder</h2></div>
     <div class="list"><div class="row" style="border:1px solid var(--gold);border-radius:14px">${avatar(next.m, 44)}
       <span class="who"><b>${esc(next.m.name)}</b><small>${next.kind === 'due' ? 'Pending ' + inr(next.m.due) : (status(next.m).key === 'expired' ? 'Ended ' : 'Ends ') + fmtDate(next.m.expiry)}</small></span>
       <a class="ib" href="tel:${esc(next.m.mobile)}" aria-label="Call">${ic('phone', 20)}</a></div></div>
-    <button class="btn primary wide" data-act="wa" data-id="${next.m.id}" data-k="${next.kind}" style="margin-top:8px">${ic('chat', 18)} WhatsApp par bhejo</button>` : '';
-  return `<p class="sum" style="margin-top:0">Roz ki reminder list khud banti hai — koi paid service nahi. Ek-ek karke WhatsApp dabao, message pehle se type milega; bhejte hi naam list se hat jayega.</p>
-    <div class="sechd"><h2>Aaj ke reminders (${q.length})</h2><span class="mini">${done.length}/${q.length} bheje</span></div>
+    <button class="btn primary wide" data-act="wa" data-id="${next.m.id}" data-k="${next.kind}" style="margin-top:8px">${ic('chat', 18)} Send on WhatsApp</button>` : '';
+  return `<p class="sum" style="margin-top:0">The reminder list builds itself every day — no paid service needed. Tap WhatsApp one by one; the message is typed and ready, and each sent name moves out of the list.</p>
+    <div class="sechd"><h2>Today's reminders (${q.length})</h2><span class="mini">${done.length}/${q.length} sent</span></div>
     <div style="height:8px;border-radius:6px;background:var(--card2);overflow:hidden;margin:2px 0 8px"><div style="height:100%;width:${pct}%;background:var(--grad)"></div></div>
-    ${q.length === 0 ? '<div class="list"><div class="empty">Aaj koi reminder nahi hai. 🎉</div></div>' : ''}
-    ${next ? nextCard : (q.length ? '<div class="list"><div class="empty">Aaj ke saare reminders bhej diye. 🎉</div></div>' : '')}
-    ${left.length > 1 ? sec('Bache hue', left.slice(1)) : ''}
-    ${sec('Aaj bhej diye', done)}`;
+    ${q.length === 0 ? '<div class="list"><div class="empty">No reminders for today. 🎉</div></div>' : ''}
+    ${next ? nextCard : (q.length ? '<div class="list"><div class="empty">All reminders for today are sent. 🎉</div></div>' : '')}
+    ${left.length > 1 ? sec('Remaining', left.slice(1)) : ''}
+    ${sec('Sent today', done)}`;
 }
 
 /* ---------- reports ---------- */
@@ -763,16 +777,16 @@ function exportMembers() { download(`gym-members-${today()}.csv`, csv(membersRow
 let pendingRestore = null;
 function readBackupFile(f) {
   const done = txt => {
-    let p; try { p = JSON.parse(txt); } catch (e) { return toast('Ye sahi backup file nahi hai', true); }
+    let p; try { p = JSON.parse(txt); } catch (e) { return toast('This is not a valid backup file', true); }
     const d = p && p.data ? p.data : p;
-    if (!d || !Array.isArray(d.members) || !Array.isArray(d.payments)) return toast('Ye sahi backup file nahi hai', true);
+    if (!d || !Array.isArray(d.members) || !Array.isArray(d.payments)) return toast('This is not a valid backup file', true);
     pendingRestore = d;
     openSheet('Restore backup?', `
       <p style="margin:0 0 6px">Backup file me hai:</p>
       <p class="mini" style="margin:0 0 10px">Gym: <b>${esc((d.gym && d.gym.name) || '-')}</b> · Members: <b>${d.members.length}</b> · Payments: <b>${d.payments.length}</b>${p.exportedAt ? `<br>Backup ki date: ${esc(String(p.exportedAt).slice(0, 10))}` : ''}</p>
-      <p style="margin:0 0 6px">Abhi ke data me hai: <b>${db.members.length}</b> members · <b>${db.payments.length}</b> payments</p>
-      <p class="mini" style="margin:0 0 6px;color:var(--red)">Restore karne par abhi wala data is backup se BADAL jayega. Ye kadam wapas nahi hoga.</p>
-      <div class="actions"><button class="btn danger" data-act="doRestore">Haan, restore karo</button><button class="btn ghost" data-act="closeSheet">Cancel</button></div>`);
+      <p style="margin:0 0 6px">Current data has: <b>${db.members.length}</b> members · <b>${db.payments.length}</b> payments</p>
+      <p class="mini" style="margin:0 0 6px;color:var(--red)">Restoring will REPLACE all current data with this backup. This cannot be undone.</p>
+      <div class="actions"><button class="btn danger" data-act="doRestore">Yes, restore</button><button class="btn ghost" data-act="closeSheet">Cancel</button></div>`);
   };
   if (f.text) f.text().then(done).catch(() => toast('File padh nahi paya', true));
   else { const r = new FileReader(); r.onload = () => done(r.result); r.onerror = () => toast('File padh nahi paya', true); r.readAsText(f); }
@@ -813,16 +827,16 @@ async function doExport() {
     to = `${y}-${String(mo).padStart(2, '0')}-${String(new Date(y, mo, 0).getDate()).padStart(2, '0')}`;
   } else { from = ($('#expFrom') || {}).value; to = ($('#expTo') || {}).value; }
   if (!from || !to || from > to) return toast('Sahi date range chuno', true);
-  const cap = type === 'payments' ? 3650 : 366; // attendance din-ba-din banta hai, isliye 1 saal ki hadd
-  if (daysBetween(from, to) > cap) return toast('Ek baar me zyada se zyada ' + (cap === 366 ? '1 saal' : '10 saal') + ' ka data milega', true);
+  const cap = type === 'payments' ? 3650 : 366; // attendance builds day by day, so a 1-year cap
+  if (daysBetween(from, to) > cap) return toast('You can export at most ' + (cap === 366 ? '1 year' : '10 years') + ' at a time', true);
   if (type === 'payments') {
     const r = paymentsRows(from, to);
-    if (!r.count) return toast('Is period me koi payment nahi hai', true);
+    if (!r.count) return toast('No payments in this period', true);
     return download(`gym-payments-${from}-to-${to}.csv`, csv(r.rows));
   }
   if (type === 'attendance') {
     const r = await attRowsForExport(from, to);
-    if (!r.count) return toast('Is period me attendance nahi hai', true);
+    if (!r.count) return toast('No attendance in this period', true);
     return download(`gym-attendance-${from}-to-${to}.csv`, csv(r.rows));
   }
   const pr = paymentsRows(from, to), ar = await attRowsForExport(from, to);
@@ -832,7 +846,7 @@ async function doExport() {
     ['=== PAYMENTS ==='], ...pr.rows, [],
     ['=== ATTENDANCE ==='], ...ar.rows];
   download(`gym-all-data-${from}-to-${to}.csv`, csv(rows));
-  toast('All data download ho gaya');
+  toast('All data downloaded');
 }
 function exportAttendance() {
   const r = monthAtt(ui.attMonth), head = ['Member', 'Mobile'];
@@ -897,7 +911,7 @@ function rowsFromChkList(list, from, to) {
     const day = byDate[d] || {};
     Object.keys(day).filter(getM).sort((x, y) => getM(x).name.localeCompare(getM(y).name)).forEach(id => {
       const m = getM(id), v = day[id];
-      const t = s => (v.find(x => x.s === s) || {}).t || 'Present';
+      const t = s => { const x = v.find(x => x.s === s); return x ? (x.o ? x.t + '–' + x.o : x.t) : 'Present'; };
       rows.push([d, m.name, txt(m.mobile), t('M'), t('E')]); n++;
     });
   }
@@ -1048,7 +1062,7 @@ function settingsSheet() {
     </form>
     ${panel('export', `
       <h3 style="font-size:20px;margin:4px 0 8px">Export data (Excel)</h3>
-      <p class="mini" style="margin:0 0 10px">Jo data chahiye wo chuno. File CSV me download hogi — Excel me seedha khul jayegi.</p>
+      <p class="mini" style="margin:0 0 10px">Choose the data you need. The file downloads as CSV and opens directly in Excel.</p>
       <label>Data type<select id="expType">
         <option value="members">Members (sab)</option>
         <option value="feesdue">Fees due (pending)</option>
@@ -1059,24 +1073,24 @@ function settingsSheet() {
       <label>Period<select id="expMode"><option value="month">Month-wise</option><option value="range">Date range (date se date tak)</option></select></label>
       <label id="expMonthWrap">Month<input type="month" id="expMonth" value="${today().slice(0, 7)}"></label>
       <div class="two" id="expRangeWrap" hidden><label>From date<input type="date" id="expFrom" value="${today().slice(0, 8)}01"></label><label>To date<input type="date" id="expTo" value="${today()}"></label></div>
-      <p class="mini">Members aur Fees due hamesha aaj ke current hote hain — period sirf Attendance, Payments aur All data par lagta hai.</p>
+      <p class="mini">Members and Fees due are always current — the period applies only to Attendance, Payments and All data.</p>
       <button class="btn primary wide" data-act="doExport">Download</button>`)}
     ${panel('backup', `
       <h3 style="font-size:20px;margin:4px 0 8px">Data backup</h3>
-      <p class="mini" style="margin:0 0 10px">Poora gym data ek hi file me — members, payments, attendance, plans aur settings sab. File ko apne paas safe rakho; kabhi data kharab ho jaye to isi file se wapas la sakte hain.</p>
+      <p class="mini" style="margin:0 0 10px">The complete gym data in one file — members, payments, attendance, plans and settings. Keep the file safe with you; if data ever gets corrupted, it can be restored from this file.</p>
       <p class="mini" style="margin:0 0 10px">Is samay: <b>${db.members.length}</b> members · <b>${db.payments.length}</b> payments</p>
       <button class="btn primary wide" data-act="dlBackup">Download full backup (All data)</button>
       <hr>
       <h3 style="font-size:20px;margin:0 0 8px">Restore backup</h3>
-      <p class="mini" style="margin:0 0 10px">Purani backup file se data wapas lao. <b>Dhyan do:</b> restore karne par abhi wala data backup file wale data se badal jayega — pehle upar se current data ka backup le lena sahi rahega.</p>
+      <p class="mini" style="margin:0 0 10px">Bring data back from an older backup file. <b>Careful:</b> restoring replaces the current data with the backup file's data — taking a fresh backup of the current data first (above) is a good idea.</p>
       <input type="file" id="backupFile" accept=".json,application/json" hidden>
       <button class="btn ghost wide" data-act="pickBackup">Backup file chuno (Restore)</button>`)}
     ${panel('privacy', `
       <h3 style="font-size:20px;margin:4px 0 8px">Privacy</h3>
       <p class="mini" style="margin:0 0 8px"><b>Tumhara data, tumhara hai.</b> Gym ka data (members, payments, attendance) secure cloud me save hota hai, taaki phone badalne ya kharab hone par bhi data na khoye.</p>
-      <p class="mini" style="margin:0 0 8px"><b>Kaun dekh sakta hai?</b> Sirf tumhare gym ke login se tumhare gym ka data khulta hai. Koi dusra gym tumhara data nahi dekh sakta. Password koi nahi dekh sakta — na app banane wala; wo sirf reset ho sakta hai.</p>
-      <p class="mini" style="margin:0 0 8px"><b>Tumhare control me:</b> Tum kabhi bhi Settings se poora backup aur export le sakte ho. App band karna ho to bata do — tumhara data delete kar diya jayega.</p>
-      <p class="mini" style="margin:0">Data becha nahi jata, kisi advertiser ko nahi diya jata.${support ? ` Sawal ho to WhatsApp karo: ${esc(support)}` : ''}</p>`)}
+      <p class="mini" style="margin:0 0 8px"><b>Who can see the data?</b> Only your gym's login can open your gym's data. No other gym can see your data. Nobody can see your password — not even the app maker; it can only be reset.</p>
+      <p class="mini" style="margin:0 0 8px"><b>You stay in control:</b> You can take a full backup and exports from Settings any time. If you want to close the app, just say so — your data will be deleted.</p>
+      <p class="mini" style="margin:0">Data is never sold and never shared with advertisers.${support ? ` Questions? WhatsApp: ${esc(support)}` : ''}</p>`)}
     ${panel('account', `
       <h3 style="font-size:20px;margin:4px 0 8px">Online database</h3>
       <p class="mini" style="margin:0 0 10px">${esc(window.cloud ? cloud.statusText() : '')}</p>
@@ -1157,25 +1171,26 @@ function buildDemo() {
       ids.forEach(id => {
         const v = [{ s: 'M', t: `${pad(6 + Math.floor(Math.random() * 3))}:${pad(Math.floor(Math.random() * 60))}` }];
         if (Math.random() > .65) v.push({ s: 'E', t: `${pad(17 + Math.floor(Math.random() * 3))}:${pad(Math.floor(Math.random() * 60))}` });
+        v.forEach(x => { if (k > 0 || Math.random() > .35) { const [hh, mm] = x.t.split(':').map(Number); const out = Math.min(hh * 60 + mm + 45 + Math.floor(Math.random() * 90), 21 * 60 + 59); x.o = pad(Math.floor(out / 60)) + ':' + pad(out % 60); } });
         db.checkins[d][id] = v;
       });
     }
   }
 }
 
-/* ---------- preview mode (bina login showroom) ---------- */
+/* ---------- preview mode (no-login showroom) ---------- */
 let previewMode = false;
 const PREVIEW_OK = new Set(['tab', 'feeTab', 'attMode', 'repMode', 'setTab', 'member', 'closeSheet', 'goFees', 'goRemind', 'goFilter', 'filter', 'settings', 'previewLogin', 'preview']);
 function trialWaLink() {
   const s = ((window.GYM_CLOUD && GYM_CLOUD.support) || '').replace(/\D/g, '').slice(-10);
-  return s ? 'https://wa.me/91' + s + '?text=' + encodeURIComponent('Namaste, mujhe Gym Manager app ka free trial chahiye.') : '';
+  return s ? 'https://wa.me/91' + s + '?text=' + encodeURIComponent('Hello, I want a free trial of the Gym Manager app.') : '';
 }
 function previewBlock() {
   const wa = trialWaLink();
-  openSheet('Ye sirf preview hai', `
-    <p class="sum">Ye demo data hai — sirf dekhne ke liye. Apne gym ka data chalane ke liye login karo. Naya gym hai to free trial ke liye message karo.</p>
-    <button class="btn primary wide" data-act="previewLogin">Login karo</button>
-    ${wa ? `<a class="btn wide" href="${wa}" target="_blank" rel="noopener" style="display:block;text-align:center;margin-top:8px">Free trial ke liye WhatsApp karo</a>` : ''}`);
+  openSheet('This is only a preview', `
+    <p class="sum">This is demo data — just for looking. To run your own gym's data, please log in. New gym? Message us for a free trial.</p>
+    <button class="btn primary wide" data-act="previewLogin">Log in</button>
+    ${wa ? `<a class="btn wide" href="${wa}" target="_blank" rel="noopener" style="display:block;text-align:center;margin-top:8px">WhatsApp for a free trial</a>` : ''}`);
 }
 window.startPreview = function () {
   previewMode = true;
@@ -1235,7 +1250,7 @@ const actions = {
     // directly (synchronously inside the tap, so no popup block), and the QR
     // image downloads alongside so it can be attached in the chat.
     const m = getM(el.dataset.id);
-    if (!/^\d{10}$/.test(m.mobile || '')) { toast('Is member ka mobile number sahi nahi hai', true); return; }
+    if (!/^\d{10}$/.test(m.mobile || '')) { toast('Mobile number of this member is not valid', true); return; }
     openWA(waLink(m, 'welcome'));
     actions.qrSave(el);
     toast('QR downloaded. WhatsApp chat opened - attach the image and send.');
@@ -1244,18 +1259,18 @@ const actions = {
   install: async () => { if (!deferredInstall) return; deferredInstall.prompt(); await deferredInstall.userChoice; deferredInstall = null; $('#installBtn').hidden = true; },
   wa: el => {
     const m = getM(el.dataset.id); if (!m) return;
-    if (!/^\d{10}$/.test(m.mobile || '')) return toast('Is member ka mobile number sahi nahi hai', true);
+    if (!/^\d{10}$/.test(m.mobile || '')) return toast('Mobile number of this member is not valid', true);
     const k = el.dataset.k || 'exp';
     openWA(waLink(m, k));
-    if (k === 'exp' || k === 'due') { // reminder bhej diya — aaj ki list me nishan lagao
+    if (k === 'exp' || k === 'due') { // reminder sent — mark it in today's list
       m.rem = { d: today(), k };
       save();
       if (ui.tab === 'fees' && ui.feeTab === 'remind') render();
     }
   },
   att: el => {
-    const m = getM(el.dataset.id), r = checkIn(m);
-    toast(r.already ? `${m.name} already has a ${SESS[r.s].toLowerCase()} entry` : `${m.name} marked, ${SESS[r.s].toLowerCase()} ${r.t}`, r.already);
+    const m = getM(el.dataset.id), r = scanToggle(m);
+    toast(r.exit ? `${m.name} exit marked at ${r.o} (${durText(r.t, r.o)})` : r.already ? `${m.name} already has a ${SESS[r.s].toLowerCase()} entry` : `${m.name} marked, ${SESS[r.s].toLowerCase()} ${r.t}`, r.already);
     $('#attBody').innerHTML = attDailyList();
   },
   exportRep: exportReport, exportMembers, exportPending, exportAtt: exportAttendance, exportAttDay,
@@ -1272,7 +1287,7 @@ const actions = {
     const d = pendingRestore; pendingRestore = null;
     db = { gym: d.gym || db.gym, plans: (d.plans && d.plans.length) ? d.plans : db.plans, members: d.members || [], payments: d.payments || [], attendance: d.attendance || {}, checkins: d.checkins || {}, seq: d.seq || 1 };
     save(); closeSheet(); render();
-    toast(`Backup restore ho gaya — ${db.members.length} members wapas aa gaye`);
+    toast(`Backup restored — ${db.members.length} members are back`);
   },
   logout: () => { if (confirm('Log out from this phone?')) { closeSheet(); cloud.logout(); } },
   dlBackup: () => {
