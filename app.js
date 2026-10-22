@@ -53,10 +53,16 @@ const nowTime = () => { const d = new Date(); return pad(d.getHours()) + ':' + p
 const sessionOf = t => (+t.slice(0, 2) < (db.gym.eveningFrom || 12) ? 'M' : 'E');
 const minsBetween = (a, b) => { const [h1, m1] = a.split(':').map(Number), [h2, m2] = b.split(':').map(Number); return (h2 * 60 + m2) - (h1 * 60 + m1); };
 const durText = (a, b) => { const m = minsBetween(a, b); if (m <= 0) return '0m'; const h = Math.floor(m / 60), r = m % 60; return h ? (r ? h + 'h ' + r + 'm' : h + 'h') : r + 'm'; };
-function scanToggle(m, date = today(), time = nowTime()) {
+const exitGrace = () => db.gym.exitGrace == null ? 10 : Math.max(0, +db.gym.exitGrace || 0);
+function scanToggle(m, date = today(), time = nowTime(), force = false) {
   const day = (db.checkins[date] = db.checkins[date] || {}), list = (day[m.id] = day[m.id] || []);
   const open = list.find(x => !x.o);
-  if (open) { open.o = time; save(); return { exit: true, s: open.s, t: open.t, o: time }; }
+  if (open) {
+    // An accidental immediate re-scan must not mark an exit — for the
+    // first grace minutes it counts as "already checked in" instead.
+    if (!force && minsBetween(open.t, time) < exitGrace()) return { dup: true, s: open.s, t: open.t };
+    open.o = time; save(); return { exit: true, s: open.s, t: open.t, o: time };
+  }
   const s = sessionOf(time), ex = list.find(x => x.s === s);
   if (ex) return { already: true, s, t: ex.t, o: ex.o };
   list.push({ s, t: time }); list.sort((a, b) => a.t.localeCompare(b.t));
@@ -360,7 +366,7 @@ function viewAttendance() {
     <button class="btn primary wide" style="margin-top:0" data-act="camToggle" id="camBtn">Start camera</button>
     <button class="btn ghost wide" style="margin-top:8px" data-act="camFlip" id="camFlipBtn">${faceBtnTxt()}</button>
     <p class="sum" id="scanCount" style="margin-top:14px">${countsLine()}</p>
-    <p class="mini">Keep this screen open on the gate phone. The camera starts by itself and keeps scanning. The same QR card works for entry and exit: first scan of a session marks entry, the next scan marks exit with the visit duration.</p>
+    <p class="mini">Keep this screen open on the gate phone. The camera starts by itself and keeps scanning. The same QR card works for entry and exit: first scan of a session marks entry, the next scan marks exit with the visit duration. An accidental re-scan within ${exitGrace()} minutes of entry is treated as a duplicate, not an exit.</p>
     ${window.GYM_PREVIEW ? `<hr><label class="mini">Test without camera
       <select id="simSel" style="width:100%;padding:10px;margin-top:4px">${db.members.map(m => `<option value="${m.id}">${esc(m.name)} (${status(m).key})</option>`).join('')}</select></label>
       <button class="btn ghost wide" data-act="simScan">Simulate scan</button>` : ''}`;
@@ -478,7 +484,7 @@ function onScan(data) {
     beep(true); speak(VL().exit(m.name, durText(r.t, r.o)));
     return showRes('ok', m, esc(m.name), [`Exit marked at ${r.o}`, `${SESS[r.s]} visit: ${r.t} – ${r.o} (${durText(r.t, r.o)})`]);
   }
-  if (r.already) { beep(false); speak(VL().dup(m.name)); return showRes('dup', m, esc(m.name), [r.o ? `Already visited this ${SESS[r.s].toLowerCase()} session: ${r.t} – ${r.o}.` : `Already checked in for ${SESS[r.s].toLowerCase()} at ${r.t}.`]); }
+  if (r.already || r.dup) { beep(false); speak(VL().dup(m.name)); return showRes('dup', m, esc(m.name), [r.o ? `Already visited this ${SESS[r.s].toLowerCase()} session: ${r.t} – ${r.o}.` : `Already checked in for ${SESS[r.s].toLowerCase()} at ${r.t}.`]); }
   beep(true);
   const lines = [`${SESS[r.s]} entry at ${r.t}`];
   if (s.key === 'expiring') lines.push(`Membership ends ${s.left === 0 ? 'today' : 'in ' + s.left + ' days'} (${fmtDate(m.expiry)}). Please renew.`);
@@ -1053,6 +1059,8 @@ function settingsSheet() {
       <label>Evening starts at (hour)<input name="ef" type="number" min="1" max="23" value="${db.gym.eveningFrom || 12}"></label></div>
       <div class="two"><label>Gate voice<select name="voice">${[['en', 'English'], ['hi', 'Hindi'], ['off', 'Off']].map(([k, l]) => `<option value="${k}" ${(db.gym.voice || 'en') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label>Warn before expiry (days)<input name="warn" type="number" min="1" max="60" value="${warnDays()}"></label></div>
+      <label>Exit grace (minutes)<input name="grace" type="number" min="0" max="120" value="${exitGrace()}"></label>
+      <p class="mini" style="margin:-6px 0 10px">A re-scan within these minutes of entry counts as a duplicate, not an exit — protects against accidental double scans. Set 0 to turn off.</p>
       <button class="btn primary wide">Save settings</button>`)}
     ${panel('plans', `
       <h3 style="font-size:20px;margin:4px 0 0">Membership plans</h3>
@@ -1147,7 +1155,7 @@ const handlers = {
     const ids = f.getAll('pid'), names = f.getAll('pn'), months = f.getAll('pm'), fees = f.getAll('pf');
     if (!names.length) return toast('Keep at least one plan', true);
     db.plans = names.map((n, i) => ({ id: ids[i] || 'p' + Date.now().toString(36) + i, name: n.trim(), months: +months[i], fee: +fees[i] }));
-    db.gym.name = f.get('gym').trim(); db.gym.phone = (f.get('gphone') || '').trim(); db.gym.address = (f.get('gaddr') || '').trim(); db.gym.pin = f.get('pin').trim(); db.gym.eveningFrom = +f.get('ef') || 12; db.gym.voice = f.get('voice') || 'en'; db.gym.warnDays = +f.get('warn') || 10;
+    db.gym.name = f.get('gym').trim(); db.gym.phone = (f.get('gphone') || '').trim(); db.gym.address = (f.get('gaddr') || '').trim(); db.gym.pin = f.get('pin').trim(); db.gym.eveningFrom = +f.get('ef') || 12; db.gym.voice = f.get('voice') || 'en'; db.gym.warnDays = +f.get('warn') || 10; const gr = parseInt(f.get('grace'), 10); db.gym.exitGrace = isNaN(gr) ? 10 : Math.min(120, Math.max(0, gr));
     save(); closeSheet(); render(); toast('Settings saved');
   },
 };
@@ -1269,7 +1277,7 @@ const actions = {
     }
   },
   att: el => {
-    const m = getM(el.dataset.id), r = scanToggle(m);
+    const m = getM(el.dataset.id), r = scanToggle(m, today(), nowTime(), true); // the owner's manual tap is deliberate — no grace
     toast(r.exit ? `${m.name} exit marked at ${r.o} (${durText(r.t, r.o)})` : r.already ? `${m.name} already has a ${SESS[r.s].toLowerCase()} entry` : `${m.name} marked, ${SESS[r.s].toLowerCase()} ${r.t}`, r.already);
     $('#attBody').innerHTML = attDailyList();
   },
