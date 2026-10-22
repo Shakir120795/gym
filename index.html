@@ -17,6 +17,10 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<div id="previewBar" hidden>
+  <span class="pv-txt">👁 Preview mode — ye demo data hai, koi feature kaam nahi karega.</span>
+  <span class="pv-acts"><a class="btn light small" id="pvWa" href="#" target="_blank" rel="noopener">Trial ke liye WhatsApp</a><button class="btn primary small" data-act="previewLogin">Login</button></span>
+</div>
 <header class="top">
   <div class="brand"><span id="gymName">Gym Manager</span></div>
   <div class="top-acts">
@@ -46,6 +50,8 @@
     <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
     <button class="btn primary wide">Sign in</button>
     <p id="loginMsg" role="alert"></p>
+    <button type="button" class="btn ghost wide" data-act="preview" style="margin-top:6px">Bina login ke pehle app dekho</button>
+    <p class="mini" style="text-align:center;margin-top:8px">Preview me demo data dikhega — features login ke baad hi chalenge.</p>
   </form>
 </div>
 <div id="netblock" hidden>

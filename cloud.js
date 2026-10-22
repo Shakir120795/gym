@@ -350,7 +350,7 @@
     document.addEventListener('visibilitychange', () => { if (!document.hidden && session && booted) sync(); });
     window.addEventListener('pagehide', () => { if (session && booted && !running) { clearTimeout(deb); sync(); } });
     setInterval(() => { if (!document.hidden && session && booted) sync(); }, POLL_MS);
-    if (!session) showLogin(); else start();
+    if (!session) { if (window.startPreview) window.startPreview(); else showLogin(); } else start();
   }
 
   /* Purane check-ins (45-din window se bahar ke) server se laana — sirf
@@ -368,6 +368,6 @@
     return all.map(r => r.data).filter(d => d && d.date && d.mid);
   }
 
-  window.cloud = { enabled, sync, touch, logout, statusText, retry, init, fetchChk, get state() { return state; }, get booted() { return booted; }, get gymId() { return gymId(); }, get license() { return licenseInfo(); } };
+  window.cloud = { enabled, sync, touch, logout, statusText, retry, init, fetchChk, toLogin: () => requireLogin(), get state() { return state; }, get booted() { return booted; }, get gymId() { return gymId(); }, get license() { return licenseInfo(); } };
   init();
 })();

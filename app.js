@@ -861,6 +861,7 @@ function mergeChk(list) {
   });
 }
 async function loadAttMonth() {
+  if (previewMode) return;
   if (!(window.cloud && cloud.enabled && cloud.fetchChk)) return;
   const ym = ui.attMonth, [from, to] = monthBounds(ym);
   if (from > addDays(today(), -40)) return; // window ke andar ka data local hi hai
@@ -874,6 +875,7 @@ async function loadAttMonth() {
   } catch (e) { if (ui.attMonth === ym && $('#attBody')) $('#attBody').innerHTML = attMonthly(); }
 }
 async function loadAttDay() {
+  if (previewMode) return;
   if (!(window.cloud && cloud.enabled && cloud.fetchChk)) return;
   const d = ui.attDate;
   if (d > addDays(today(), -40)) return;
@@ -1136,7 +1138,8 @@ const handlers = {
   },
 };
 
-function seedDemo() {
+function seedDemo() { buildDemo(); save(); closeSheet(); render(); toast('Demo data loaded'); }
+function buildDemo() {
   const names = ['Aman Verma', 'Priya Singh', 'Rahul Yadav', 'Neha Gupta', 'Vikas Chauhan', 'Sonia Mishra', 'Karan Patel', 'Anjali Rawat', 'Deepak Kumar', 'Pooja Sahu', 'Sandeep Thakur', 'Rekha Joshi', 'Mohit Saini', 'Kavita Pandey'];
   const t = today(); db.members = []; db.payments = []; db.attendance = {}; db.checkins = {};
   names.forEach((n, i) => {
@@ -1158,8 +1161,31 @@ function seedDemo() {
       });
     }
   }
-  save(); closeSheet(); render(); toast('Demo data loaded');
 }
+
+/* ---------- preview mode (bina login showroom) ---------- */
+let previewMode = false;
+const PREVIEW_OK = new Set(['tab', 'feeTab', 'attMode', 'repMode', 'setTab', 'member', 'closeSheet', 'goFees', 'goRemind', 'goFilter', 'filter', 'settings', 'previewLogin', 'preview']);
+function trialWaLink() {
+  const s = ((window.GYM_CLOUD && GYM_CLOUD.support) || '').replace(/\D/g, '').slice(-10);
+  return s ? 'https://wa.me/91' + s + '?text=' + encodeURIComponent('Namaste, mujhe Gym Manager app ka free trial chahiye.') : '';
+}
+function previewBlock() {
+  const wa = trialWaLink();
+  openSheet('Ye sirf preview hai', `
+    <p class="sum">Ye demo data hai — sirf dekhne ke liye. Apne gym ka data chalane ke liye login karo. Naya gym hai to free trial ke liye message karo.</p>
+    <button class="btn primary wide" data-act="previewLogin">Login karo</button>
+    ${wa ? `<a class="btn wide" href="${wa}" target="_blank" rel="noopener" style="display:block;text-align:center;margin-top:8px">Free trial ke liye WhatsApp karo</a>` : ''}`);
+}
+window.startPreview = function () {
+  previewMode = true;
+  document.body.classList.add('pv');
+  const lg = $('#login'); if (lg) lg.hidden = true;
+  const bar = $('#previewBar');
+  if (bar) { bar.hidden = false; const a = $('#pvWa'); if (a) { const wa = trialWaLink(); if (wa) a.href = wa; else a.hidden = true; } }
+  buildDemo();
+  render();
+};
 
 /* ---------- events ---------- */
 const actions = {
@@ -1167,6 +1193,8 @@ const actions = {
   goFilter: el => { ui.filter = el.dataset.f; go('members'); },
   goFees: () => { ui.feeTab = 'pending'; go('fees'); },
   goRemind: () => { ui.feeTab = 'remind'; go('fees'); },
+  preview: () => { if (window.startPreview) window.startPreview(); },
+  previewLogin: () => { previewMode = false; document.body.classList.remove('pv'); const bar = $('#previewBar'); if (bar) bar.hidden = true; closeSheet(); if (window.cloud && cloud.toLogin) cloud.toLogin(); },
   filter: el => { ui.filter = el.dataset.f; render(); },
   feeTab: el => { ui.feeTab = el.dataset.k; render(); },
   attMode: el => { ui.attMode = el.dataset.k; render(); },
@@ -1284,10 +1312,16 @@ const actions = {
 };
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-act]');
+  if (previewMode) {
+    const a = e.target.closest ? e.target.closest('a') : null;
+    if (a && !(a.closest && a.closest('#previewBar')) && /^(tel:|https:\/\/wa\.me)/.test(a.getAttribute ? (a.getAttribute('href') || '') : '')) { e.preventDefault(); previewBlock(); return; }
+    if (el && actions[el.dataset.act] && !PREVIEW_OK.has(el.dataset.act)) { previewBlock(); return; }
+  }
   if (el && actions[el.dataset.act]) actions[el.dataset.act](el);
 });
 document.addEventListener('submit', e => {
   const form = e.target.closest('form[data-form]'); if (!form) return;
+  if (previewMode) { e.preventDefault(); previewBlock(); return; }
   e.preventDefault(); handlers[form.dataset.form](new FormData(form), form.dataset.id);
 });
 document.addEventListener('input', e => {
@@ -1313,7 +1347,7 @@ document.addEventListener('change', e => {
   else if (t.id === 'repDate') { ui.repDate = t.value || ui.repDate; render(); }
   else if (t.id === 'repMonth') { ui.repMonth = t.value || ui.repMonth; render(); }
   else if (t.id === 'expMode') { const m = t.value === 'month'; if ($('#expMonthWrap')) $('#expMonthWrap').hidden = !m; if ($('#expRangeWrap')) $('#expRangeWrap').hidden = m; }
-  else if (t.id === 'backupFile' && t.files && t.files[0]) { readBackupFile(t.files[0]); t.value = ''; }
+  else if (t.id === 'backupFile' && t.files && t.files[0]) { if (previewMode) { previewBlock(); t.value = ''; return; } readBackupFile(t.files[0]); t.value = ''; }
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeCam(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet(); });
