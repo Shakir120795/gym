@@ -56,14 +56,18 @@ const durText = (a, b) => { const m = minsBetween(a, b); if (m <= 0) return '0m'
 const exitGrace = () => db.gym.exitGrace == null ? 10 : Math.max(0, +db.gym.exitGrace || 0);
 function scanToggle(m, date = today(), time = nowTime(), force = false) {
   const day = (db.checkins[date] = db.checkins[date] || {}), list = (day[m.id] = day[m.id] || []);
-  const open = list.find(x => !x.o);
+  const s = sessionOf(time);
+  // An exit only closes an open visit of the SAME session. An earlier
+  // session's unclosed visit (member forgot to scan out) never blocks
+  // the new session's entry — it simply stays without an exit time.
+  const open = list.find(x => !x.o && x.s === s);
   if (open) {
     // An accidental immediate re-scan must not mark an exit — for the
     // first grace minutes it counts as "already checked in" instead.
-    if (!force && minsBetween(open.t, time) < exitGrace()) return { dup: true, s: open.s, t: open.t };
-    open.o = time; save(); return { exit: true, s: open.s, t: open.t, o: time };
+    if (!force && minsBetween(open.t, time) < exitGrace()) return { dup: true, s, t: open.t };
+    open.o = time; save(); return { exit: true, s, t: open.t, o: time };
   }
-  const s = sessionOf(time), ex = list.find(x => x.s === s);
+  const ex = list.find(x => x.s === s);
   if (ex) return { already: true, s, t: ex.t, o: ex.o };
   list.push({ s, t: time }); list.sort((a, b) => a.t.localeCompare(b.t));
   const a = (db.attendance[date] = db.attendance[date] || []);
@@ -71,8 +75,8 @@ function scanToggle(m, date = today(), time = nowTime(), force = false) {
   save(); return { entry: true, s, t: time };
 }
 function insideNow() {
-  const day = db.checkins[today()] || {};
-  return Object.keys(day).filter(id => getM(id) && (day[id] || []).some(x => !x.o)).length;
+  const day = db.checkins[today()] || {}, s = sessionOf(nowTime());
+  return Object.keys(day).filter(id => getM(id) && (day[id] || []).some(x => !x.o && x.s === s)).length;
 }
 function dayCounts(date = today()) {
   const day = db.checkins[date] || {}, ids = new Set([...(db.attendance[date] || []), ...Object.keys(day)].filter(getM));
@@ -319,7 +323,7 @@ function viewFees() {
 }
 
 /* ---------- attendance ---------- */
-const visitTags = (v = []) => v.map(x => `<span class="tag ${x.s === 'M' ? 'expiring' : 'active'}">${SESS[x.s]} ${x.t}${x.o ? '–' + x.o + ' (' + durText(x.t, x.o) + ')' : ' • Inside'}</span>`).join(' ');
+const visitTags = (v = [], live = false) => v.map(x => `<span class="tag ${x.s === 'M' ? 'expiring' : 'active'}">${SESS[x.s]} ${x.t}${x.o ? '–' + x.o + ' (' + durText(x.t, x.o) + ')' : (live && x.s === sessionOf(nowTime()) ? ' • Inside' : '')}</span>`).join(' ');
 const manualOpen = () => Date.now() < (ui.manualUntil || 0) && ui.attDate === today();
 function attDailyList() {
   const d = ui.attDate, day = db.checkins[d] || {}, c = dayCounts(d);
@@ -327,7 +331,7 @@ function attDailyList() {
   const came = [...ids].map(getM).sort((a, b) => a.name.localeCompare(b.name));
   let html = `<p class="sum"><b>${c.members}</b> members came, morning ${c.M}, evening ${c.E}</p>` +
     (came.length ? `<div class="list">${came.map(m => `<div class="row in"><span class="check">${ic('check', 20)}</span>
-      <span class="who"><b>${esc(m.name)}</b><span style="display:flex;gap:6px;flex-wrap:wrap;margin-top:3px">${visitTags(day[m.id]) || '<small>Marked earlier</small>'}</span></span></div>`).join('')}</div>`
+      <span class="who"><b>${esc(m.name)}</b><span style="display:flex;gap:6px;flex-wrap:wrap;margin-top:3px">${visitTags(day[m.id], d === today()) || '<small>Marked earlier</small>'}</span></span></div>`).join('')}</div>`
       : '<div class="list"><div class="empty">Nobody has scanned in yet.</div></div>');
   if (ui.attDate === today()) {
     if (manualOpen()) {
@@ -366,7 +370,7 @@ function viewAttendance() {
     <button class="btn primary wide" style="margin-top:0" data-act="camToggle" id="camBtn">Start camera</button>
     <button class="btn ghost wide" style="margin-top:8px" data-act="camFlip" id="camFlipBtn">${faceBtnTxt()}</button>
     <p class="sum" id="scanCount" style="margin-top:14px">${countsLine()}</p>
-    <p class="mini">Keep this screen open on the gate phone. The camera starts by itself and keeps scanning. The same QR card works for entry and exit: first scan of a session marks entry, the next scan marks exit with the visit duration. An accidental re-scan within ${exitGrace()} minutes of entry is treated as a duplicate, not an exit.</p>
+    <p class="mini">Keep this screen open on the gate phone. The camera starts by itself and keeps scanning. The same QR card works for entry and exit: first scan of a session marks entry, the next scan marks exit with the visit duration. An accidental re-scan within ${exitGrace()} minutes of entry is treated as a duplicate, not an exit. If a member forgets to scan out, the next session's first scan simply starts a fresh entry — the old visit stays without an exit time.</p>
     ${window.GYM_PREVIEW ? `<hr><label class="mini">Test without camera
       <select id="simSel" style="width:100%;padding:10px;margin-top:4px">${db.members.map(m => `<option value="${m.id}">${esc(m.name)} (${status(m).key})</option>`).join('')}</select></label>
       <button class="btn ghost wide" data-act="simScan">Simulate scan</button>` : ''}`;
@@ -631,7 +635,7 @@ function attDetail(id) {
       <div class="stat"><b>${E}</b><small>Evening visits</small></div>
     </div>
     <p class="mini" style="margin:10px 0 8px">Last visit: <b>${fmtDate(days[0])}</b></p>
-    <div class="list">${shown.map(d => { const v = (db.checkins[d] || {})[id] || []; return `<div class="row"><span class="who"><b>${fmtDate(d)}</b></span><span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${v.length ? visitTags(v) : '<span class="tag active">Present</span>'}</span></div>`; }).join('')}</div>
+    <div class="list">${shown.map(d => { const v = (db.checkins[d] || {})[id] || []; return `<div class="row"><span class="who"><b>${fmtDate(d)}</b></span><span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${v.length ? visitTags(v, d === today()) : '<span class="tag active">Present</span>'}</span></div>`; }).join('')}</div>
     ${days.length > 30 ? `<p class="mini" style="margin-top:8px">Showing the last 30 visit days of ${days.length}.</p>` : ''}`;
 }
 function fallbackCopy(text, done) {
